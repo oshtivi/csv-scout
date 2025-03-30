@@ -1,9 +1,8 @@
 extern crate csv;
-extern crate qsv_sniffer;
 
 use std::path::Path;
 
-use qsv_sniffer::{SampleSize, Sniffer};
+use csv_scout::{SampleSize, Sniffer};
 
 fn main() {
     let data_filepath = Path::new(file!())
@@ -14,5 +13,5 @@ fn main() {
         .sample_size(SampleSize::All)
         .sniff_path(data_filepath)
         .unwrap();
-    println!("{:#?}", dialect);
+    println!("{dialect:#?}");
 }

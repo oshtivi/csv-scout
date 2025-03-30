@@ -1,10 +1,11 @@
 extern crate csv;
-extern crate qsv_sniffer;
 
 use std::path::Path;
 
-use qsv_sniffer::metadata::*;
-use qsv_sniffer::{DatePreference, SampleSize, Sniffer, Type};
+use csv_scout::{
+    DatePreference, SampleSize, Sniffer, Type,
+    metadata::{Dialect, Header, Metadata, Quote},
+};
 
 #[test]
 fn test_utf8() {

@@ -1,10 +1,11 @@
 extern crate csv;
-extern crate qsv_sniffer;
 
 use std::path::Path;
 
-use qsv_sniffer::metadata::*;
-use qsv_sniffer::{SampleSize, Sniffer, Type};
+use csv_scout::{
+    SampleSize, Sniffer, Type,
+    metadata::{Dialect, Header, Metadata, Quote},
+};
 
 #[test]
 fn test_semicolon() {

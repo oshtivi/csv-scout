@@ -1,9 +1,8 @@
 extern crate csv;
-extern crate qsv_sniffer;
 
 use std::path::Path;
 
-use qsv_sniffer::metadata::*;
+use csv_scout::metadata::{Dialect, Header, Quote};
 
 fn main() {
     let data_filepath = Path::new(file!())
@@ -21,9 +20,7 @@ fn main() {
         is_utf8: true,
     };
     let mut reader = dialect.open_path(data_filepath).unwrap();
-    for result in reader.records() {
-        let record = result.unwrap();
-        println!("{:?}", record);
-        break;
-    }
+    let result = reader.records().next();
+    let record = result.unwrap().unwrap();
+    println!("{record:?}");
 }
