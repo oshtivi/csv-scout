@@ -1,5 +1,5 @@
 /*!
-This `csv-sniffer` crate provides methods to infer CSV file details (delimiter choice, quote
+This `csv-scout` crate provides methods to infer CSV file details (delimiter choice, quote
 character, number of fields, field data types, etc.).
 
 # Overview
@@ -36,13 +36,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-csv-sniffer = "0.1"
-```
-
-and this to your crate root:
-
-```rust
-extern crate qsv_sniffer;
+csv-scout = "0.1"
 ```
 
 # Example
@@ -51,7 +45,6 @@ This example shows how to write a simple command-line tool for discovering the m
 file:
 
 ```no_run
-extern crate qsv_sniffer;
 
 use std::env;
 
@@ -63,7 +56,7 @@ fn main() {
     }
 
     // sniff the path provided by the first argument
-    match qsv_sniffer::Sniffer::new().sniff_path(&args[1]) {
+    match csv_scout::Sniffer::new().sniff_path(&args[1]) {
         Ok(metadata) => {
             println!("{}", metadata);
         },
