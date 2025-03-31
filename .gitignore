@@ -5,3 +5,4 @@ Cargo.lock
 *.json
 
 .history/
+.pre-commit-config.yaml
