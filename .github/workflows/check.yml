@@ -1,0 +1,23 @@
+name: Cargo Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: Cargo Check (All Targets)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run cargo check
+        run: cargo check --all-targets --all-features
