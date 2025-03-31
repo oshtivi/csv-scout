@@ -12,7 +12,7 @@ use crate::{
     chain::{Chain, STATE_STEADYFLEX, STATE_STEADYSTRICT, STATE_UNSTEADY, ViterbiResults},
     error::{Result, SnifferError},
     // field_type::DatePreference,
-    metadata::{Dialect, Header, Metadata, Quote},
+    metadata::{Dialect, Metadata, Quote},
     sample::{SampleIter, SampleSize, take_sample_from_start},
 };
 
@@ -28,8 +28,8 @@ thread_local! (pub static IS_UTF8: RefCell<bool> = const { RefCell::new(true) })
 pub struct Sniffer {
     // CSV file dialect guesses
     delimiter: Option<u8>,
-    num_preamble_rows: Option<usize>,
-    has_header_row: Option<bool>,
+    // num_preamble_rows: Option<usize>,
+    // has_header_row: Option<bool>,
     quote: Option<Quote>,
     flexible: Option<bool>,
     is_utf8: Option<bool>,
@@ -38,7 +38,7 @@ pub struct Sniffer {
     delimiter_freq: Option<usize>,
     // fields: Vec<String>,
     // types: Vec<Type>,
-    avg_record_len: Option<usize>,
+    // avg_record_len: Option<usize>,
 
     // sample size to sniff
     sample_size: Option<SampleSize>,
@@ -56,11 +56,11 @@ impl Sniffer {
         self
     }
     /// Specify the header type (whether the CSV file has a header row, and where the data starts).
-    pub fn header(&mut self, header: &Header) -> &mut Self {
-        self.num_preamble_rows = Some(header.num_preamble_rows);
-        self.has_header_row = Some(header.has_header_row);
-        self
-    }
+    // pub fn header(&mut self, header: &Header) -> &mut Self {
+    //     self.num_preamble_rows = Some(header.num_preamble_rows);
+    //     self.has_header_row = Some(header.has_header_row);
+    //     self
+    // }
     /// Specify the quote character (if any), and whether two quotes in a row as to be interpreted
     /// as an escaped quote.
     pub fn quote(&mut self, quote: Quote) -> &mut Self {
@@ -153,13 +153,13 @@ impl Sniffer {
         //         && self.delimiter_freq.is_some()
         // );
         if !(self.delimiter.is_some()
-            && self.num_preamble_rows.is_some()
+            // && self.num_preamble_rows.is_some()
             && self.quote.is_some()
             && self.flexible.is_some()
             && self.is_utf8.is_some()
             && self.delimiter_freq.is_some()
-            && self.has_header_row.is_some()
-            && self.avg_record_len.is_some()
+            // && self.has_header_row.is_some()
+            // && self.avg_record_len.is_some()
             && self.delimiter_freq.is_some())
         {
             return Err(SnifferError::SniffingFailed(format!(
@@ -319,7 +319,7 @@ impl Sniffer {
         // correspond with position in a vector of Chains), but we'll just ignore it when
         // constructing our return value later. 'best_state' and 'path' are necessary, though, to
         // compute the preamble rows.
-        let (best_delim, delim_freq, best_state, path, _) = chains.iter_mut().enumerate().fold(
+        let (best_delim, delim_freq, best_state, _, _) = chains.iter_mut().enumerate().fold(
             (b',', 0, STATE_UNSTEADY, vec![], 0.0),
             |acc, (i, ref mut chain)| {
                 let (_, _, best_state, _, best_state_prob) = acc;
@@ -352,22 +352,22 @@ impl Sniffer {
 
         // Find the number of preamble rows (the number of rows during which the state fluctuated
         // before getting to the final state).
-        let mut num_preamble_rows = 0;
+        // let mut num_preamble_rows = 0;
         // since path has an extra state as the beginning, skip one
-        for &(state, _) in path.iter().skip(2) {
-            if state == best_state {
-                break;
-            }
-            num_preamble_rows += 1;
-        }
-        if num_preamble_rows > 0 {
-            num_preamble_rows += 1;
-        }
+        // for &(state, _) in path.iter().skip(2) {
+        //     if state == best_state {
+        //         break;
+        //     }
+        //     num_preamble_rows += 1;
+        // }
+        // if num_preamble_rows > 0 {
+        //     num_preamble_rows += 1;
+        // }
         if self.delimiter.is_none() {
             self.delimiter = Some(best_delim);
         }
         self.delimiter_freq = Some(delim_freq);
-        self.num_preamble_rows = Some(num_preamble_rows);
+        // self.num_preamble_rows = Some(num_preamble_rows);
         Ok(())
     }
 

@@ -31,7 +31,7 @@ pub struct SampleIter<'a, R: 'a + Read> {
 }
 
 impl<'a, R: Read> SampleIter<'a, R> {
-    fn new(reader: &'a mut R, sample_size: SampleSize) -> SampleIter<'a, R> {
+    fn new(reader: &'a mut R, sample_size: SampleSize) -> Self {
         let buf_reader = BufReader::new(reader);
         SampleIter {
             reader: buf_reader,
@@ -43,7 +43,7 @@ impl<'a, R: Read> SampleIter<'a, R> {
     }
 }
 
-impl<'a, R: Read> Iterator for SampleIter<'a, R> {
+impl<R: Read> Iterator for SampleIter<'_, R> {
     type Item = Result<String>;
 
     fn next(&mut self) -> Option<Result<String>> {
@@ -71,7 +71,7 @@ impl<'a, R: Read> Iterator for SampleIter<'a, R> {
                 });
                 String::from_utf8_lossy(&buf).to_string()
             },
-            |str_utf8| str_utf8.to_string(),
+            std::string::ToString::to_string,
         );
 
         let last_byte = (output.as_ref() as &[u8])[output.len() - 1];
