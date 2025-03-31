@@ -8,7 +8,7 @@ keywords = ["csv"]
 license = "MIT"
 name = "csv-scout"
 repository = "https://github.com/oshtivi/csv-scout"
-version = "0.0.1"
+version = "0.0.2"
 rust-version = "1.85"
 
 [features]
