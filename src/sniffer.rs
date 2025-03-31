@@ -4,23 +4,22 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use csv::{Reader, StringRecord};
+use csv::Reader;
 use csv_core as csvc;
 use regex::Regex;
 
 use crate::{
     chain::{Chain, STATE_STEADYFLEX, STATE_STEADYSTRICT, STATE_UNSTEADY, ViterbiResults},
     error::{Result, SnifferError},
-    field_type::{
-        DatePreference, Type, TypeGuesses, get_best_types, infer_record_types, infer_types,
-    },
+    // field_type::DatePreference,
     metadata::{Dialect, Header, Metadata, Quote},
     sample::{SampleIter, SampleSize, take_sample_from_start},
-    snip::snip_preamble,
 };
 
+const NUM_ASCII_CHARS: usize = 128;
+
 thread_local! (pub static IS_UTF8: RefCell<bool> = const { RefCell::new(true) });
-thread_local! (pub static DATE_PREFERENCE: RefCell<DatePreference> = const { RefCell::new(DatePreference::MdyFormat) });
+// thread_local! (pub static DATE_PREFERENCE: RefCell<DatePreference> = const { RefCell::new(DatePreference::MdyFormat) });
 
 /// A CSV sniffer.
 ///
@@ -37,35 +36,34 @@ pub struct Sniffer {
 
     // Metadata guesses
     delimiter_freq: Option<usize>,
-    fields: Vec<String>,
-    types: Vec<Type>,
+    // fields: Vec<String>,
+    // types: Vec<Type>,
     avg_record_len: Option<usize>,
 
     // sample size to sniff
     sample_size: Option<SampleSize>,
-
     // date format preference
-    date_preference: Option<DatePreference>,
+    // date_preference: Option<DatePreference>,
 }
 impl Sniffer {
     /// Create a new CSV sniffer.
-    pub fn new() -> Sniffer {
-        Sniffer::default()
+    pub fn new() -> Self {
+        Self::default()
     }
     /// Specify the delimiter character.
-    pub fn delimiter(&mut self, delimiter: u8) -> &mut Sniffer {
+    pub fn delimiter(&mut self, delimiter: u8) -> &mut Self {
         self.delimiter = Some(delimiter);
         self
     }
     /// Specify the header type (whether the CSV file has a header row, and where the data starts).
-    pub fn header(&mut self, header: &Header) -> &mut Sniffer {
+    pub fn header(&mut self, header: &Header) -> &mut Self {
         self.num_preamble_rows = Some(header.num_preamble_rows);
         self.has_header_row = Some(header.has_header_row);
         self
     }
-    /// Specify the quote character (if any), and whether two quotes in a row as to be interepreted
+    /// Specify the quote character (if any), and whether two quotes in a row as to be interpreted
     /// as an escaped quote.
-    pub fn quote(&mut self, quote: Quote) -> &mut Sniffer {
+    pub fn quote(&mut self, quote: Quote) -> &mut Self {
         self.quote = Some(quote);
         self
     }
@@ -74,7 +72,7 @@ impl Sniffer {
     /// sniffer will use the `Terminator::CRLF` as record separator.
     ///
     /// The sample size defaults to `SampleSize::Bytes(4096)`.
-    pub fn sample_size(&mut self, sample_size: SampleSize) -> &mut Sniffer {
+    pub fn sample_size(&mut self, sample_size: SampleSize) -> &mut Self {
         self.sample_size = Some(sample_size);
         self
     }
@@ -83,28 +81,28 @@ impl Sniffer {
         self.sample_size.unwrap_or(SampleSize::Bytes(1 << 14))
     }
 
-    /// The date format preference when sniffing.
-    ///
-    /// The date format preference defaults to `DatePreference::MDY`.
-    pub fn date_preference(&mut self, date_preference: DatePreference) -> &mut Sniffer {
-        DATE_PREFERENCE.with(|preference| {
-            *preference.borrow_mut() = date_preference;
-        });
-        self.date_preference = Some(date_preference);
-        self
-    }
+    // The date format preference when sniffing.
+    //
+    // The date format preference defaults to `DatePreference::MDY`.
+    // pub fn date_preference(&mut self, date_preference: DatePreference) -> &mut Self {
+    //     DATE_PREFERENCE.with(|preference| {
+    //         *preference.borrow_mut() = date_preference;
+    //     });
+    //     self.date_preference = Some(date_preference);
+    //     self
+    // }
 
     /// Sniff the CSV file located at the provided path, and return a `Reader` (from the
     /// [`csv`](https://docs.rs/csv) crate) ready to ready the file.
     ///
-    /// Fails on file opening or readering errors, or on an error examining the file.
+    /// Fails on file opening or rendering errors, or on an error examining the file.
     pub fn open_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Reader<File>> {
         self.open_reader(File::open(path)?)
     }
     /// Sniff the CSV file provided by the reader, and return a [`csv`](https://docs.rs/csv)
     /// `Reader` object.
     ///
-    /// Fails on file opening or readering errors, or on an error examining the file.
+    /// Fails on file opening or rendering errors, or on an error examining the file.
     pub fn open_reader<R: Read + Seek>(&mut self, mut reader: R) -> Result<Reader<R>> {
         let metadata = self.sniff_reader(&mut reader)?;
         reader.seek(SeekFrom::Start(0))?;
@@ -114,7 +112,7 @@ impl Sniffer {
     /// Sniff the CSV file located at the provided path, and return a
     /// [`Metadata`](struct.Metadata.html) object containing information about the CSV file.
     ///
-    /// Fails on file opening or readering errors, or on an error examining the file.
+    /// Fails on file opening or rendering errors, or on an error examining the file.
     pub fn sniff_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Metadata> {
         let file = File::open(path)?;
         self.sniff_reader(&file)
@@ -139,7 +137,7 @@ impl Sniffer {
             self.infer_delim_preamble(&mut reader)?;
         }
 
-        self.infer_types(&mut reader)?;
+        // self.infer_types(&mut reader)?;
         self.is_utf8 = Some(IS_UTF8.with(|flag| *flag.borrow()));
 
         // as this point of the process, we should have all these filled in.
@@ -172,18 +170,18 @@ impl Sniffer {
         Ok(Metadata {
             dialect: Dialect {
                 delimiter: self.delimiter.unwrap(),
-                header: Header {
-                    num_preamble_rows: self.num_preamble_rows.unwrap(),
-                    has_header_row: self.has_header_row.unwrap(),
-                },
+                // header: Header {
+                //     num_preamble_rows: self.num_preamble_rows.unwrap(),
+                //     has_header_row: self.has_header_row.unwrap(),
+                // },
                 quote: self.quote.clone().unwrap(),
-                flexible: self.flexible.unwrap(),
-                is_utf8: self.is_utf8.unwrap(),
+                // flexible: self.flexible.unwrap(),
+                // is_utf8: self.is_utf8.unwrap(),
             },
-            avg_record_len: self.avg_record_len.unwrap(),
-            num_fields: self.delimiter_freq.unwrap() + 1,
-            fields: self.fields.clone(),
-            types: self.types.clone(),
+            // avg_record_len: self.avg_record_len.unwrap(),
+            // num_fields: self.delimiter_freq.unwrap() + 1,
+            // fields: self.fields.clone(),
+            // types: self.types.clone(),
         })
     }
 
@@ -294,7 +292,6 @@ impl Sniffer {
     fn infer_delim_preamble<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
         let sample_iter = take_sample_from_start(reader, self.get_sample_size())?;
 
-        const NUM_ASCII_CHARS: usize = 128;
         let mut chains = vec![Chain::default(); NUM_ASCII_CHARS];
         for line in sample_iter {
             let line = line?;
@@ -374,125 +371,125 @@ impl Sniffer {
         Ok(())
     }
 
-    fn infer_types<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
-        // prerequisites for calling this function:
-        if self.delimiter_freq.is_none() {
-            // instead of assert, return error
-            // assert!(self.delimiter_freq.is_some());
-            return Err(SnifferError::SniffingFailed(
-                "delimiter frequency not known".to_string(),
-            ));
-        }
-        // safety: unwrap is safe as we just checked that delimiter_freq is Some
-        let field_count = self.delimiter_freq.unwrap() + 1;
+    // fn infer_types<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
+    //     // prerequisites for calling this function:
+    //     if self.delimiter_freq.is_none() {
+    //         // instead of assert, return error
+    //         // assert!(self.delimiter_freq.is_some());
+    //         return Err(SnifferError::SniffingFailed(
+    //             "delimiter frequency not known".to_string(),
+    //         ));
+    //     }
+    //     // safety: unwrap is safe as we just checked that delimiter_freq is Some
+    //     let field_count = self.delimiter_freq.unwrap() + 1;
 
-        let mut csv_reader = self.create_csv_reader(reader)?;
-        let mut records_iter = csv_reader.byte_records();
-        let mut n_bytes = 0;
-        let mut n_records = 0;
-        let sample_size = self.get_sample_size();
+    //     let mut csv_reader = self.create_csv_reader(reader)?;
+    //     let mut records_iter = csv_reader.byte_records();
+    //     let mut n_bytes = 0;
+    //     let mut n_records = 0;
+    //     let sample_size = self.get_sample_size();
 
-        // Infer types for the top row. We'll save this set of types to check against the types
-        // of the remaining rows to see if this is part of the data or a separate header row.
-        let header_row_types = match records_iter.next() {
-            Some(record) => {
-                let byte_record = record?;
-                let str_record = StringRecord::from_byte_record_lossy(byte_record);
-                n_records += 1;
-                n_bytes += count_bytes(&str_record);
-                infer_record_types(&str_record)
-            }
-            None => {
-                return Err(SnifferError::SniffingFailed(
-                    "CSV empty (after preamble)".into(),
-                ));
-            }
-        };
-        let mut row_types = vec![TypeGuesses::all(); field_count];
+    //     // Infer types for the top row. We'll save this set of types to check against the types
+    //     // of the remaining rows to see if this is part of the data or a separate header row.
+    //     let header_row_types = match records_iter.next() {
+    //         Some(record) => {
+    //             let byte_record = record?;
+    //             let str_record = StringRecord::from_byte_record_lossy(byte_record);
+    //             n_records += 1;
+    //             n_bytes += count_bytes(&str_record);
+    //             infer_record_types(&str_record)
+    //         }
+    //         None => {
+    //             return Err(SnifferError::SniffingFailed(
+    //                 "CSV empty (after preamble)".into(),
+    //             ));
+    //         }
+    //     };
+    //     let mut row_types = vec![TypeGuesses::all(); field_count];
 
-        for record in records_iter {
-            let record = record?;
-            for (i, field) in record.iter().enumerate() {
-                let str_field = String::from_utf8_lossy(field).to_string();
-                row_types[i] &= infer_types(&str_field);
-            }
-            n_records += 1;
-            n_bytes += record.as_slice().len();
-            // break if we pass sample size limits
-            match sample_size {
-                SampleSize::Records(recs) => {
-                    if n_records > recs {
-                        break;
-                    }
-                }
-                SampleSize::Bytes(bytes) => {
-                    if n_bytes > bytes {
-                        break;
-                    }
-                }
-                SampleSize::All => {}
-            }
-        }
-        if n_records == 1 {
-            // there's only one row in the whole data file (the top row already parsed),
-            // so we're going to assume it's a data row, not a header row.
-            self.has_header_row = Some(false);
-            self.types = get_best_types(&header_row_types);
-            self.avg_record_len = Some(n_bytes);
-            return Ok(());
-        }
+    //     for record in records_iter {
+    //         let record = record?;
+    //         for (i, field) in record.iter().enumerate() {
+    //             let str_field = String::from_utf8_lossy(field).to_string();
+    //             row_types[i] &= infer_types(&str_field);
+    //         }
+    //         n_records += 1;
+    //         n_bytes += record.as_slice().len();
+    //         // break if we pass sample size limits
+    //         match sample_size {
+    //             SampleSize::Records(recs) => {
+    //                 if n_records > recs {
+    //                     break;
+    //                 }
+    //             }
+    //             SampleSize::Bytes(bytes) => {
+    //                 if n_bytes > bytes {
+    //                     break;
+    //                 }
+    //             }
+    //             SampleSize::All => {}
+    //         }
+    //     }
+    //     if n_records == 1 {
+    //         // there's only one row in the whole data file (the top row already parsed),
+    //         // so we're going to assume it's a data row, not a header row.
+    //         self.has_header_row = Some(false);
+    //         self.types = get_best_types(&header_row_types);
+    //         self.avg_record_len = Some(n_bytes);
+    //         return Ok(());
+    //     }
 
-        if header_row_types
-            .iter()
-            .zip(&row_types)
-            .any(|(header, data)| !data.allows(*header))
-        {
-            self.has_header_row = Some(true);
-            // get field names in header
-            for field in csv_reader.byte_headers()? {
-                self.fields.push(String::from_utf8_lossy(field).to_string());
-            }
-        } else {
-            self.has_header_row = Some(false);
-        }
+    //     if header_row_types
+    //         .iter()
+    //         .zip(&row_types)
+    //         .any(|(header, data)| !data.allows(*header))
+    //     {
+    //         self.has_header_row = Some(true);
+    //         // get field names in header
+    //         for field in csv_reader.byte_headers()? {
+    //             self.fields.push(String::from_utf8_lossy(field).to_string());
+    //         }
+    //     } else {
+    //         self.has_header_row = Some(false);
+    //     }
 
-        self.types = get_best_types(&row_types);
-        self.avg_record_len = Some(n_bytes / n_records);
-        Ok(())
-    }
+    //     self.types = get_best_types(&row_types);
+    //     self.avg_record_len = Some(n_bytes / n_records);
+    //     Ok(())
+    // }
 
-    fn create_csv_reader<'a, R: Read + Seek>(
-        &self,
-        mut reader: &'a mut R,
-    ) -> Result<Reader<&'a mut R>> {
-        reader.seek(SeekFrom::Start(0))?;
-        if let Some(num_preamble_rows) = self.num_preamble_rows {
-            snip_preamble(&mut reader, num_preamble_rows)?;
-        }
+    // fn create_csv_reader<'a, R: Read + Seek>(
+    //     &self,
+    //     mut reader: &'a mut R,
+    // ) -> Result<Reader<&'a mut R>> {
+    //     reader.seek(SeekFrom::Start(0))?;
+    //     if let Some(num_preamble_rows) = self.num_preamble_rows {
+    //         snip_preamble(&mut reader, num_preamble_rows)?;
+    //     }
 
-        let mut builder = csv::ReaderBuilder::new();
-        if let Some(delim) = self.delimiter {
-            builder.delimiter(delim);
-        }
-        if let Some(has_header_row) = self.has_header_row {
-            builder.has_headers(has_header_row);
-        }
-        match self.quote {
-            Some(Quote::Some(chr)) => {
-                builder.quoting(true);
-                builder.quote(chr);
-            }
-            Some(Quote::None) => {
-                builder.quoting(false);
-            }
-            _ => {}
-        }
-        if let Some(flexible) = self.flexible {
-            builder.flexible(flexible);
-        }
+    //     let mut builder = csv::ReaderBuilder::new();
+    //     if let Some(delim) = self.delimiter {
+    //         builder.delimiter(delim);
+    //     }
+    //     if let Some(has_header_row) = self.has_header_row {
+    //         builder.has_headers(has_header_row);
+    //     }
+    //     match self.quote {
+    //         Some(Quote::Some(chr)) => {
+    //             builder.quoting(true);
+    //             builder.quote(chr);
+    //         }
+    //         Some(Quote::None) => {
+    //             builder.quoting(false);
+    //         }
+    //         _ => {}
+    //     }
+    //     if let Some(flexible) = self.flexible {
+    //         builder.flexible(flexible);
+    //     }
 
-        Ok(builder.from_reader(reader))
-    }
+    //     Ok(builder.from_reader(reader))
+    // }
 }
 
 fn quote_count<R: Read>(
@@ -500,11 +497,10 @@ fn quote_count<R: Read>(
     character: char,
     delim: Option<u8>,
 ) -> Result<Option<(usize, u8)>> {
-    let pattern = if let Some(delim) = delim {
-        format!(r#"{character}\s*?{delim}\s*{character}"#)
-    } else {
-        format!(r#"{character}\s*?(?P<delim>[^\w\n'"`])\s*{character}"#)
-    };
+    let pattern = delim.map_or_else(
+        || format!(r#"{character}\s*?(?P<delim>[^\w\n'"`])\s*{character}"#),
+        |delim| format!(r"{character}\s*?{delim}\s*{character}"),
+    );
     // safety: unwrap is safe as we know the pattern is valid
     let re = Regex::new(&pattern).unwrap();
 
@@ -556,8 +552,4 @@ fn quote_count<R: Read>(
         ));
     }
     Ok(Some((count, delim)))
-}
-
-fn count_bytes(record: &StringRecord) -> usize {
-    record.iter().fold(0, |acc, field| acc + field.len())
 }

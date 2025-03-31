@@ -88,7 +88,7 @@ pub use sniffer::Sniffer;
 mod sample;
 pub use sample::SampleSize;
 
-mod field_type;
-pub use field_type::{DatePreference, Type};
+// mod field_type;
+// pub use field_type::{DatePreference, Type};
 
-mod snip;
+// mod snip;
