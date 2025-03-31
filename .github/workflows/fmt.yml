@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  fmt:
+    name: Check code formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+          override: true
+
+      - name: Check formatting
+        run: cargo fmt -- --check
