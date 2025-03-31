@@ -24,15 +24,15 @@ opt-level = 3
 strip = true
 
 [dependencies]
-bitflags = "2.5"
+# bitflags = "2.5"
 bytecount = "0.6"
 csv = "1"
 csv-core = "0.1"
 hashbrown = "0.15"
 memchr = "2"
-qsv-dateparser = "0.13"
+# qsv-dateparser = "0.13"
 regex = "1"
-tabwriter = "1.4"
+# tabwriter = "1.4"
 
 [target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 simdutf8 = "0.1"
