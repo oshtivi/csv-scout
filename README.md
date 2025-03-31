@@ -4,15 +4,23 @@
 
 **CSV Scout** is a Rust library for inferring basic CSV metadata — currently focused on detecting the **delimiter** and **quote character**.
 
+
+This is a fork of ([qsv-reader](https://github.com/jqnatividad/qsv-sniffer))
+
+
 ---
 
 ## 📦 Usage
 
-Add to your `Cargo.toml`:
+```shell
+cargo add csv-scout
+```
+
+Or directly to to Cargo.toml
 
 ```toml
 [dependencies]
-csv-scout = "0.9"
+csv-scout = "*"
 ```
 
 Import it in your crate:
