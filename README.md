@@ -18,17 +18,17 @@ csv-scout = "0.9"
 Import it in your crate:
 
 ```rust
-use qsv_sniffer;
+use csv_scout;
 ```
 
 ### Example
 
 ```rust
-use qsv_sniffer;
+use csv_scout;
 
 fn main() {
     let path = "data/example.csv";
-    match qsv_sniffer::Sniffer::new().sniff_path(path) {
+    match csv_scout::Sniffer::new().sniff_path(path) {
         Ok(metadata) => println!("{}", metadata),
         Err(err) => eprintln!("ERROR: {}", err),
     }
