@@ -28,8 +28,8 @@ jobs:
 
       - name: Install git-cliff
         run: |
-          curl -sSL https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-linux-x86_64.tar.gz \
-            | tar xz -C /usr/local/bin git-cliff
+          curl -sSL https://github.com/orhun/git-cliff/releases/latest/download/git-cliff-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz --strip-components=1 --wildcards -C /usr/local/bin '*/git-cliff'
 
       - name: Run cargo release
         env:
@@ -45,16 +45,15 @@ jobs:
 
       - name: Get latest tag
         id: get_tag
-        run: |
-          echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+        run: echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes with git-cliff
         id: cliff
         run: |
           git cliff --tag ${{ steps.get_tag.outputs.tag }} > RELEASE_NOTES.md
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          cat RELEASE_NOTES.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
