@@ -1,0 +1,17 @@
+name: Validate Commit Messages
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  validate:
+    name: Validate commit messages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Validate commit messages
+        uses: webiny/action-conventional-commits@v1.2.0
