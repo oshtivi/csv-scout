@@ -497,23 +497,40 @@ fn quote_count<R: Read>(
     character: char,
     delim: Option<u8>,
 ) -> Result<Option<(usize, u8)>> {
+    // Build a regex that matches a quoted CSV cell,
+    // optionally followed by a delimiter.
+    // If delim is None, we try to capture a candidate delimiter.
     let pattern = delim.map_or_else(
-        || format!(r#"{character}\s*?(?P<delim>[^\w\n'"`])\s*{character}"#),
-        |delim| format!(r"{character}\s*?{delim}\s*{character}"),
+        || {
+            // When delim is not provided, capture candidate delimiters in a group.
+            format!(
+                r"{character}(?P<field>(?:[^{character}]|{character}{character})*){character}(?:\s*(?P<delim>[^\w\n{character}])\s*)?"
+            )
+        },
+        |delim| {
+            // When delim is provided, enforce its presence if it appears.
+            format!(
+                r"{q}(?P<field>(?:[^{q}]|{q}{q})*){q}(?:\s*{d}\s*)?",
+                q = character,
+                d = delim as char
+            )
+        },
     );
-    // safety: unwrap is safe as we know the pattern is valid
+    // Safety: unwrap is safe here because we control the regex pattern.
     let re = Regex::new(&pattern).unwrap();
 
     let mut delim_count_map: HashMap<String, usize> = HashMap::new();
     let mut count = 0;
     for line in sample_iter {
         let line = line?;
+        // Iterate through all quoted cell matches in the line.
         for cap in re.captures_iter(&line) {
             count += 1;
-            // if we already know delimiter, we don't need to count
-            if delim.is_some() {
-            } else {
-                *delim_count_map.entry(cap["delim"].to_string()).or_insert(0) += 1;
+            // If delim was not provided, count candidate delimiter occurrences.
+            if delim.is_none() {
+                if let Some(d) = cap.name("delim") {
+                    *delim_count_map.entry(d.as_str().to_string()).or_insert(0) += 1;
+                }
             }
         }
     }
@@ -521,32 +538,25 @@ fn quote_count<R: Read>(
         return Ok(None);
     }
 
-    // if we already know delimiter, no need to go through map
+    // If a delimiter was provided, just return it.
     if let Some(delim) = delim {
         return Ok(Some((count, delim)));
     }
 
-    // find the highest-count delimiter in the map
-    let (delim_count, delim) =
-        delim_count_map
-            .iter()
-            .fold((0, b'\0'), |acc, (delim, &delim_count)| {
-                // assert!(delim.len() == 1);
-                if delim.len() != 1 {
-                    // instead of assert, we set delim count to 0 and delim to null byte
-                    // this will be picked up the delim_count == 0 check below
-                    (0, b'\0')
-                } else if delim_count > acc.0 {
-                    (delim_count, (delim.as_ref() as &[u8])[0])
-                } else {
-                    acc
-                }
-            });
+    // Otherwise, select the candidate delimiter that was matched most frequently.
+    let (delim_count, delim) = delim_count_map
+        .iter()
+        .fold((0, b'\0'), |acc, (delim, &d_count)| {
+            if delim.len() != 1 {
+                (0, b'\0')
+            } else if d_count > acc.0 {
+                (d_count, delim.as_bytes()[0])
+            } else {
+                acc
+            }
+        });
 
-    // delim_count should be nonzero; delim should always match at least something
-    // instead of the assert, we return an error
     if delim_count == 0 {
-        // assert_ne!(delim_count, 0, "invalid regex match: no delimiter found");
         return Err(SnifferError::SniffingFailed(
             "invalid regex match: no delimiter found".into(),
         ));
