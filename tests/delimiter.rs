@@ -330,3 +330,24 @@ fn test_date_sniffing() {
         }
     );
 }
+
+#[test]
+fn test_tabs() {
+    let data_filepath = Path::new(file!())
+        .parent()
+        .unwrap()
+        .join("data/tab_separated.csv");
+    let metadata = Sniffer::new()
+        .sample_size(SampleSize::All)
+        .sniff_path(data_filepath)
+        .unwrap();
+    assert_eq!(
+        metadata,
+        Metadata {
+            dialect: Dialect {
+                delimiter: b'\t',
+                quote: Quote::None,
+            },
+        }
+    );
+}
