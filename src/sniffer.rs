@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use itertools::Itertools;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -6,7 +7,7 @@ use std::path::Path;
 
 use csv::Reader;
 use csv_core as csvc;
-use regex::Regex;
+use regex::{Captures, Regex};
 
 use crate::{
     chain::{Chain, STATE_STEADYFLEX, STATE_STEADYSTRICT, STATE_UNSTEADY, ViterbiResults},
@@ -16,7 +17,13 @@ use crate::{
     sample::{SampleIter, SampleSize, take_sample_from_start},
 };
 
+type NumberOfOccurrences = u32;
+type NumberOfLines = u32;
+type AdjacentFrequency = u32;
+
+const TOLERANCE: u32 = 1;
 const NUM_ASCII_CHARS: usize = 128;
+const CANDIDATES: &[u8] = b"\t,;|:";
 
 thread_local! (pub static IS_UTF8: RefCell<bool> = const { RefCell::new(true) });
 // thread_local! (pub static DATE_PREFERENCE: RefCell<DatePreference> = const { RefCell::new(DatePreference::MdyFormat) });
@@ -35,7 +42,7 @@ pub struct Sniffer {
     is_utf8: Option<bool>,
 
     // Metadata guesses
-    delimiter_freq: Option<usize>,
+    // delimiter_freq: Option<usize>,
     // fields: Vec<String>,
     // types: Vec<Type>,
     // avg_record_len: Option<usize>,
@@ -152,16 +159,15 @@ impl Sniffer {
         //         && self.avg_record_len.is_some()
         //         && self.delimiter_freq.is_some()
         // );
-        if !(self.delimiter.is_some()
+        if !(
+            self.delimiter.is_some()
             // && self.num_preamble_rows.is_some()
             && self.quote.is_some()
             && self.flexible.is_some()
             && self.is_utf8.is_some()
-            && self.delimiter_freq.is_some()
             // && self.has_header_row.is_some()
             // && self.avg_record_len.is_some()
-            && self.delimiter_freq.is_some())
-        {
+        ) {
             return Err(SnifferError::SniffingFailed(format!(
                 "Failed to infer all metadata: {self:?}"
             )));
@@ -290,19 +296,80 @@ impl Sniffer {
 
     // Updates delimiter, delimiter frequency, number of preamble rows, and flexible boolean.
     fn infer_delim_preamble<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
-        let sample_iter = take_sample_from_start(reader, self.get_sample_size())?;
+        let sample_iter =
+            take_sample_from_start(reader, self.get_sample_size())?.collect::<Result<Vec<_>>>()?;
+
+        let mut chars_frequency: HashMap<u8, HashMap<NumberOfOccurrences, NumberOfLines>> =
+            HashMap::with_capacity(NUM_ASCII_CHARS);
+
+        let mut modes: HashMap<u8, (NumberOfOccurrences, AdjacentFrequency)> =
+            HashMap::with_capacity(NUM_ASCII_CHARS);
+
+        for line in &sample_iter {
+            let mut line_frequency = HashMap::with_capacity(128);
+            for character in line.chars() {
+                let Ok(ascii_char) = u8::try_from(character) else {
+                    continue;
+                };
+                if !CANDIDATES.contains(&ascii_char) {
+                    continue;
+                }
+                *line_frequency.entry(ascii_char).or_default() += 1;
+            }
+            for (ascii_char, freq) in line_frequency {
+                let char_frequency = chars_frequency.entry(ascii_char).or_default();
+                *char_frequency.entry(freq).or_default() += 1;
+            }
+        }
+        for (&ascii_char, line_count_map) in &chars_frequency {
+            let Some((&mode_value, _)) = line_count_map
+                .iter()
+                .max_by_key(|&(_count, num_lines)| num_lines)
+            else {
+                continue; // skip empty maps, just in case
+            };
+
+            let mut adjusted_count = 0;
+            for delta in 0..=TOLERANCE {
+                for count in [mode_value.saturating_sub(delta), mode_value + delta] {
+                    if let Some(&lines) = line_count_map.get(&count) {
+                        adjusted_count += lines;
+                    }
+                }
+            }
+            if TOLERANCE > 0 {
+                if let Some(&lines) = line_count_map.get(&mode_value) {
+                    adjusted_count -= lines;
+                }
+            }
+
+            modes.insert(ascii_char, (mode_value, adjusted_count));
+        }
+        let top_candidates: Vec<u8> = modes
+            .iter()
+            .filter(|(_, (_, score))| *score > 0)
+            .sorted_by_key(|&(_, &(_, score))| std::cmp::Reverse(score)) // needs itertools or just sort
+            .take(6)
+            .map(|(&ch, _)| ch)
+            .collect();
+        dbg!(
+            &top_candidates
+                .iter()
+                .map(|c| char::from(*c))
+                .collect::<Vec<_>>()
+        );
 
         let mut chains = vec![Chain::default(); NUM_ASCII_CHARS];
+
         for line in sample_iter {
-            let line = line?;
             let mut freqs = [0; NUM_ASCII_CHARS];
             for &chr in line.as_bytes() {
                 if chr < NUM_ASCII_CHARS as u8 {
                     freqs[chr as usize] += 1;
                 }
             }
-            for (chr, &freq) in freqs.iter().enumerate() {
-                chains[chr].add_observation(freq);
+            for &ch in &top_candidates {
+                chains[ch as usize].add_observation(freqs[ch as usize]);
             }
         }
 
@@ -319,7 +386,7 @@ impl Sniffer {
         // correspond with position in a vector of Chains), but we'll just ignore it when
         // constructing our return value later. 'best_state' and 'path' are necessary, though, to
         // compute the preamble rows.
-        let (best_delim, delim_freq, best_state, _, _) = chains.iter_mut().enumerate().fold(
+        let (best_delim, _, best_state, _, _) = chains.iter_mut().enumerate().fold(
             (b',', 0, STATE_UNSTEADY, vec![], 0.0),
             |acc, (i, ref mut chain)| {
                 let (_, _, best_state, _, best_state_prob) = acc;
@@ -366,7 +433,6 @@ impl Sniffer {
         if self.delimiter.is_none() {
             self.delimiter = Some(best_delim);
         }
-        self.delimiter_freq = Some(delim_freq);
         // self.num_preamble_rows = Some(num_preamble_rows);
         Ok(())
     }
@@ -504,11 +570,14 @@ fn quote_count<R: Read>(
         || {
             // When delim is not provided, capture candidate delimiters in a group.
             format!(
-                r"{character}(?P<field>(?:[^{character}]|{character}{character})*){character}(?:\s*(?P<delim>[^\w\n{character}])\s*)?"
+                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character}).*?(?:{character})(?<delim2>[^\w\n\"\'])|
+                (?:^|\n)(?:{character}).*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
+                (?<delim4>[^\w\n\"\'])(?: ?)(?:{character}).*?(?:{character})(?:$|\n)|
+                (?:^|\n)(?:{character}).*?(?:{character})(?:$|\n)"#
             )
         },
         |delim| {
-            // When delim is provided, enforce its presence if it appears.
+            // When a delimiter is provided, enforce its presence if it appears.
             format!(
                 r"{q}(?P<field>(?:[^{q}]|{q}{q})*){q}(?:\s*{d}\s*)?",
                 q = character,
@@ -519,18 +588,16 @@ fn quote_count<R: Read>(
     // Safety: unwrap is safe here because we control the regex pattern.
     let re = Regex::new(&pattern).unwrap();
 
-    let mut delim_count_map: HashMap<String, usize> = HashMap::new();
+    let mut delim_count_map: HashMap<u8, usize> = HashMap::new();
     let mut count = 0;
     for line in sample_iter {
         let line = line?;
         // Iterate through all quoted cell matches in the line.
         for cap in re.captures_iter(&line) {
             count += 1;
-            // If delim was not provided, count candidate delimiter occurrences.
-            if delim.is_none() {
-                if let Some(d) = cap.name("delim") {
-                    *delim_count_map.entry(d.as_str().to_string()).or_insert(0) += 1;
-                }
+
+            if let Some(delim) = get_delimiter(&cap) {
+                *delim_count_map.entry(delim).or_insert(0) += 1;
             }
         }
     }
@@ -544,17 +611,16 @@ fn quote_count<R: Read>(
     }
 
     // Otherwise, select the candidate delimiter that was matched most frequently.
-    let (delim_count, delim) = delim_count_map
-        .iter()
-        .fold((0, b'\0'), |acc, (delim, &d_count)| {
-            if delim.len() != 1 {
-                (0, b'\0')
-            } else if d_count > acc.0 {
-                (d_count, delim.as_bytes()[0])
-            } else {
-                acc
-            }
-        });
+    let (delim_count, delim) =
+        delim_count_map
+            .into_iter()
+            .fold((0, b'\0'), |acc, (delim, d_count)| {
+                if d_count > acc.0 {
+                    (d_count, delim)
+                } else {
+                    acc
+                }
+            });
 
     if delim_count == 0 {
         return Err(SnifferError::SniffingFailed(
@@ -562,4 +628,26 @@ fn quote_count<R: Read>(
         ));
     }
     Ok(Some((count, delim)))
+}
+
+fn get_delimiter(captures: &Captures<'_>) -> Option<u8> {
+    let mut counts: HashMap<char, usize> = HashMap::new();
+    // Check groups delim1 through delim4.
+    for i in 1..=4 {
+        let group_name = format!("delim{i}");
+        if let Some(matched) = captures.name(&group_name) {
+            if let Some(ch) = matched.as_str().chars().next() {
+                *counts.entry(ch).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // If no candidates were found, return None.
+    if counts.is_empty() {
+        return None;
+    }
+
+    // Select the candidate with the highest frequency.
+    let (candidate, _) = counts.into_iter().max_by_key(|&(_, count)| count)?;
+    u8::try_from(candidate).ok()
 }
