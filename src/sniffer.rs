@@ -352,12 +352,6 @@ impl Sniffer {
             .take(6)
             .map(|(&ch, _)| ch)
             .collect();
-        dbg!(
-            &top_candidates
-                .iter()
-                .map(|c| char::from(*c))
-                .collect::<Vec<_>>()
-        );
 
         let mut chains = vec![Chain::default(); NUM_ASCII_CHARS];
 
