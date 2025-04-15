@@ -9,10 +9,6 @@ pub const OBS_MAXVALUE: usize = 0;
 pub const OBS_OTHER: usize = 1;
 pub const OBS_ZERO: usize = 2;
 
-#[derive(Debug, Default, Clone)]
-pub struct Chain {
-    observations: Vec<usize>,
-}
 #[derive(Debug, Clone, Copy)]
 pub struct VIteration {
     pub(crate) prob: f64,
@@ -22,6 +18,11 @@ pub struct VIteration {
 pub struct ViterbiResults {
     pub(crate) max_delim_freq: usize,
     pub(crate) path: Vec<(usize, VIteration)>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Chain {
+    observations: Vec<usize>,
 }
 impl Chain {
     pub(crate) fn add_observation(&mut self, obs: usize) {

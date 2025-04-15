@@ -38,9 +38,7 @@ pub struct Sniffer {
     // num_preamble_rows: Option<usize>,
     // has_header_row: Option<bool>,
     quote: Option<Quote>,
-    flexible: Option<bool>,
     is_utf8: Option<bool>,
-
     // Metadata guesses
     // delimiter_freq: Option<usize>,
     // fields: Vec<String>,
@@ -138,9 +136,7 @@ impl Sniffer {
 
         // if we have a delimiter, we just need to search for num_preamble_rows and check for
         // flexible. Otherwise, we need to guess a delimiter as well.
-        if self.delimiter.is_some() {
-            self.infer_preamble_known_delim(&mut reader)?;
-        } else {
+        if self.delimiter.is_none() {
             self.infer_delim_preamble(&mut reader)?;
         }
 
@@ -163,7 +159,6 @@ impl Sniffer {
             self.delimiter.is_some()
             // && self.num_preamble_rows.is_some()
             && self.quote.is_some()
-            && self.flexible.is_some()
             && self.is_utf8.is_some()
             // && self.has_header_row.is_some()
             // && self.avg_record_len.is_some()
@@ -401,15 +396,15 @@ impl Sniffer {
                 }
             },
         );
-        self.flexible = Some(match best_state {
-            STATE_STEADYSTRICT => false,
-            STATE_STEADYFLEX => true,
-            _ => {
-                return Err(SnifferError::SniffingFailed(
-                    "unable to find valid delimiter".to_string(),
-                ));
-            }
-        });
+        // self.flexible = Some(match best_state {
+        //     STATE_STEADYSTRICT => false,
+        //     STATE_STEADYFLEX => true,
+        //     _ => {
+        //         return Err(SnifferError::SniffingFailed(
+        //             "unable to find valid delimiter".to_string(),
+        //         ));
+        //     }
+        // });
 
         // Find the number of preamble rows (the number of rows during which the state fluctuated
         // before getting to the final state).

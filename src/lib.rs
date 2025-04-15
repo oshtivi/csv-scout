@@ -17,16 +17,7 @@ underlying CSV input.
 This sniffer detects the following metadata about a CSV file:
 
 * Delimiter -- byte character between fields in a record
-* Has a header row? -- whether or not the first row of the data file provdes column headers
-* Number of preamble rows -- number of rows in a CSV file before the data starts (occasionally used
-in data files to introduce the data)
 * Quote -- byte character (either ", ', or `) used to quote fields, or that the file has no quotes
-* Flexible -- whether or not records are all of the same length
-* Is utf8-encoded? -- whether the file is utf-8 encoded
-* Number of delimiter/fields -- maximum number of delimiters in each row (and therefore number of fields in
-each row)
-* Field names - the name of each field
-* Types -- the inferred data type of each field in the data table
 
 See [`Metadata`](metadata/struct.Metadata.html) for full information about what the sniffer returns.
 
