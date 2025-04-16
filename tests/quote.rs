@@ -28,7 +28,7 @@ fn test_double_quote() {
 }
 
 #[test]
-fn test_anthropic_keys() {
+fn test_most_fields_unquoted() {
     let data_filepath = Path::new(file!())
         .parent()
         .unwrap()

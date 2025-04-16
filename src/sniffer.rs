@@ -375,7 +375,7 @@ impl Sniffer {
         // correspond with position in a vector of Chains), but we'll just ignore it when
         // constructing our return value later. 'best_state' and 'path' are necessary, though, to
         // compute the preamble rows.
-        let (best_delim, _, best_state, _, _) = chains.iter_mut().enumerate().fold(
+        let (best_delim, _, _, _, _) = chains.iter_mut().enumerate().fold(
             (b',', 0, STATE_UNSTEADY, vec![], 0.0),
             |acc, (i, ref mut chain)| {
                 let (_, _, best_state, _, best_state_prob) = acc;
@@ -559,10 +559,10 @@ fn quote_count<R: Read>(
         || {
             // When delim is not provided, capture candidate delimiters in a group.
             format!(
-                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character}).*?(?:{character})(?<delim2>[^\w\n\"\'])|
-                (?:^|\n)(?:{character}).*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
-                (?<delim4>[^\w\n\"\'])(?: ?)(?:{character}).*?(?:{character})(?:$|\n)|
-                (?:^|\n)(?:{character}).*?(?:{character})(?:$|\n)"#
+                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim2>[^\w\n\"\'])|
+                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
+                (?<delim4>[^\w\n\"\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)|
+                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)"#
             )
         },
         |delim| {
