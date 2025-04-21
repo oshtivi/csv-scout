@@ -559,10 +559,10 @@ fn quote_count<R: Read>(
         || {
             // When delim is not provided, capture candidate delimiters in a group.
             format!(
-                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim2>[^\w\n\"\'])|
-                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
-                (?<delim4>[^\w\n\"\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)|
-                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)"#
+                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}\n])*?(?:{character})(?<delim2>[^\w\n\"\'])|
+                    (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}\n])*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
+                    (?<delim4>[^\w\n\"\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}\n])*?(?:{character})(?:$|\n)|
+                    (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}\n])*?(?:{character})(?:$|\n)"#
             )
         },
         |delim| {
@@ -574,20 +574,25 @@ fn quote_count<R: Read>(
             )
         },
     );
+
     // Safety: unwrap is safe here because we control the regex pattern.
     let re = Regex::new(&pattern).unwrap();
 
     let mut delim_count_map: HashMap<u8, usize> = HashMap::new();
-    let mut count = 0;
+
+    let mut buffer = String::new();
     for line in sample_iter {
         let line = line?;
-        // Iterate through all quoted cell matches in the line.
-        for cap in re.captures_iter(&line) {
-            count += 1;
+        buffer.push_str(&line);
+        buffer.push('\n');
+    }
+    let mut count = 0;
+    // Iterate through all quoted cell matches in the line.
+    for cap in re.captures_iter(&buffer) {
+        count += 1;
 
-            if let Some(delim) = get_delimiter(&cap) {
-                *delim_count_map.entry(delim).or_insert(0) += 1;
-            }
+        if let Some(delim) = get_delimiter(&cap) {
+            *delim_count_map.entry(delim).or_insert(0) += 1;
         }
     }
     if count == 0 {
@@ -598,7 +603,6 @@ fn quote_count<R: Read>(
     if let Some(delim) = delim {
         return Ok(Some((count, delim)));
     }
-
     // Otherwise, select the candidate delimiter that was matched most frequently.
     let (delim_count, delim) =
         delim_count_map
@@ -635,7 +639,6 @@ fn get_delimiter(captures: &Captures<'_>) -> Option<u8> {
     if counts.is_empty() {
         return None;
     }
-
     // Select the candidate with the highest frequency.
     let (candidate, _) = counts.into_iter().max_by_key(|&(_, count)| count)?;
     u8::try_from(candidate).ok()

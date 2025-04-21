@@ -47,3 +47,24 @@ fn test_most_fields_unquoted() {
         }
     );
 }
+
+#[test]
+fn test_quoted_fields_curly_and_comma() {
+    let data_filepath = Path::new(file!())
+        .parent()
+        .unwrap()
+        .join("data/multiline_cells_quoted.csv");
+    let metadata = Sniffer::new()
+        .sample_size(SampleSize::All)
+        .sniff_path(data_filepath)
+        .unwrap();
+    assert_eq!(
+        metadata,
+        Metadata {
+            dialect: Dialect {
+                delimiter: b',',
+                quote: Quote::Some(b'"'),
+            },
+        }
+    );
+}
