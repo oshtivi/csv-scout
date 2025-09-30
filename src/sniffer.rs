@@ -6,7 +6,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use csv::Reader;
-use csv_core as csvc;
 use regex::{Captures, Regex};
 
 use crate::{
@@ -227,66 +226,6 @@ impl Sniffer {
             self.delimiter = Some(delim_guess);
         };
         Ok(())
-    }
-
-    // Updates delimiter frequency, number of preamble rows, and flexible boolean.
-    fn infer_preamble_known_delim<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
-        // prerequisites for calling this function:
-        if !(self.delimiter.is_some() && self.quote.is_some()) {
-            // instead of assert, return an error
-            // assert!(self.delimiter.is_some() && self.quote.is_some());
-            return Err(SnifferError::SniffingFailed(
-                "infer_preamble_known_delim called without delimiter and quote".into(),
-            ));
-        }
-        // safety: unwraps for delimiter and quote are safe since we just checked above
-        let (quote, delim) = (self.quote.clone().unwrap(), self.delimiter.unwrap());
-
-        let sample_iter = take_sample_from_start(reader, self.get_sample_size())?;
-
-        let mut chain = Chain::default();
-
-        if let Quote::Some(character) = quote {
-            // since we have a quote, we need to run this data through the csv_core::Reader (which
-            // properly escapes quoted fields
-            let mut csv_reader = csvc::ReaderBuilder::new()
-                .delimiter(delim)
-                .quote(character)
-                .build();
-
-            let mut output = vec![];
-            let mut ends = vec![];
-            for line in sample_iter {
-                let line = line?;
-                if line.len() > output.len() {
-                    output.resize(line.len(), 0);
-                }
-                if line.len() > ends.len() {
-                    ends.resize(line.len(), 0);
-                }
-                let (result, _, _, n_ends) =
-                    csv_reader.read_record(line.as_bytes(), &mut output, &mut ends);
-                // check to make sure record was read correctly
-                match result {
-                    csvc::ReadRecordResult::OutputFull | csvc::ReadRecordResult::OutputEndsFull => {
-                        return Err(SnifferError::SniffingFailed(format!(
-                            "failure to read quoted CSV record: {result:?}"
-                        )));
-                    }
-                    _ => {} // non-error results, do nothing
-                }
-                // n_ends is the number of barries between fields, so it's the same as the number
-                // of delimiters
-                chain.add_observation(n_ends);
-            }
-        } else {
-            for line in sample_iter {
-                let line = line?;
-                let freq = bytecount::count(line.as_bytes(), delim);
-                chain.add_observation(freq);
-            }
-        }
-        self.run_chains(vec![chain])
     }
 
     // Updates delimiter, delimiter frequency, number of preamble rows, and flexible boolean.
