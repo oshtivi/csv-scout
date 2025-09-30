@@ -10,7 +10,7 @@ use csv_core as csvc;
 use regex::{Captures, Regex};
 
 use crate::{
-    chain::{Chain, STATE_STEADYFLEX, STATE_STEADYSTRICT, STATE_UNSTEADY, ViterbiResults},
+    chain::{Chain, STATE_UNSTEADY, ViterbiResults},
     error::{Result, SnifferError},
     // field_type::DatePreference,
     metadata::{Dialect, Metadata, Quote},
@@ -636,7 +636,24 @@ fn get_delimiter(captures: &Captures<'_>) -> Option<u8> {
         return None;
     }
 
-    // Select the candidate with the highest frequency.
-    let (candidate, _) = counts.into_iter().max_by_key(|&(_, count)| count)?;
+    let mut candidates: Vec<(char, usize)> = counts.into_iter().collect();
+    candidates.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| delimiter_priority(a.0).cmp(&delimiter_priority(b.0))) // Priority ascending (lower number wins)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let (candidate, _) = candidates.into_iter().next()?;
     u8::try_from(candidate).ok()
+}
+
+const fn delimiter_priority(delimiter: char) -> u8 {
+    match delimiter {
+        ',' => 0,  // Comma - most common CSV delimiter
+        ';' => 1,  // Semicolon - common in European CSVs
+        '\t' => 2, // Tab - TSV files
+        '|' => 3,  // Pipe - alternate delimiter
+        ':' => 4,  // Colon - sometimes used
+        _ => 255,  // Everything else gets lowest priority
+    }
 }
