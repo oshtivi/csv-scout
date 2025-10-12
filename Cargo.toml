@@ -11,6 +11,9 @@ repository = "https://github.com/oshtivi/csv-scout"
 version = "0.0.10"
 rust-version = "1.85"
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["bytecount"]
+
 [features]
 runtime-dispatch-simd = ["bytecount/runtime-dispatch-simd"]
 generic-simd = ["bytecount/generic-simd"]

@@ -491,44 +491,51 @@ fn quote_count<R: Read>(
     character: char,
     delim: Option<u8>,
 ) -> Result<Option<(usize, u8)>> {
-    // Build a regex that matches a quoted CSV cell,
-    // optionally followed by a delimiter.
-    // If delim is None, we try to capture a candidate delimiter.
+    // Collect all lines into a single string to handle multi-line quoted fields
+    let mut sample_content = String::new();
+    for line in sample_iter {
+        let line = line?;
+        if !sample_content.is_empty() {
+            sample_content.push('\n');
+        }
+        sample_content.push_str(&line);
+    }
+
+    // Build a regex that matches a quoted CSV cell.
+    // For multi-line support, use DOTALL mode to match newlines within quotes.
     let pattern = delim.map_or_else(
         || {
-            // When delim is not provided, capture candidate delimiters in a group.
+            // When delim is not provided, look for quoted fields and capture surrounding delimiters
+            // Make the pattern more restrictive to avoid matching apostrophes in text
             format!(
-                r#"(?<delim1>[^\w\n\"ֿ\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim2>[^\w\n\"\'])|
-                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?<delim3>[^\w\n\"\'])(?: ?)|
-                (?<delim4>[^\w\n\"\'])(?: ?)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)|
-                (?:^|\n)(?:{character})(?:(?:{character}{character})|[^{character}])*?(?:{character})(?:$|\n)"#
+                r"(?:(?<delim1>[,;|\t:])\s*{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim2>[,;|\t:]))?)|(?:^{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim3>[,;|\t:])|$))"
             )
         },
         |delim| {
             // When a delimiter is provided, enforce its presence if it appears.
             format!(
-                r"{q}(?P<field>(?:[^{q}]|{q}{q})*){q}(?:\s*{d}\s*)?",
+                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*{d}\s*)?",
                 q = character,
                 d = delim as char
             )
         },
     );
+
     // Safety: unwrap is safe here because we control the regex pattern.
     let re = Regex::new(&pattern).unwrap();
 
     let mut delim_count_map: HashMap<u8, usize> = HashMap::new();
     let mut count = 0;
-    for line in sample_iter {
-        let line = line?;
-        // Iterate through all quoted cell matches in the line.
-        for cap in re.captures_iter(&line) {
-            count += 1;
 
-            if let Some(delim) = get_delimiter(&cap) {
-                *delim_count_map.entry(delim).or_insert(0) += 1;
-            }
+    // Apply regex to the entire concatenated sample content
+    for cap in re.captures_iter(&sample_content) {
+        count += 1;
+
+        if let Some(delim) = get_delimiter(&cap) {
+            *delim_count_map.entry(delim).or_insert(0) += 1;
         }
     }
+
     if count == 0 {
         return Ok(None);
     }
@@ -560,8 +567,8 @@ fn quote_count<R: Read>(
 
 fn get_delimiter(captures: &Captures<'_>) -> Option<u8> {
     let mut counts: HashMap<char, usize> = HashMap::new();
-    // Check groups delim1 through delim4.
-    for i in 1..=4 {
+    // Check groups delim1 through delim3.
+    for i in 1..=3 {
         let group_name = format!("delim{i}");
         if let Some(matched) = captures.name(&group_name) {
             if let Some(ch) = matched.as_str().chars().next() {
