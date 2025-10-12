@@ -79,10 +79,24 @@ impl<R: Read> Iterator for SampleIter<'_, R> {
 
         let last_byte = (output.as_ref() as &[u8])[output.len() - 1];
         if last_byte != b'\n' && last_byte != b'\r' {
-            // non CR/LF-ended line
-            // line was cut off before ending, so we ignore it!
-            self.is_done = true;
-            return None;
+            // For quote detection, we need to include lines that don't end with newlines
+            // as they might contain closing quotes. Check if we're at EOF.
+            let mut check_buf = [0u8; 1];
+            match self.reader.read(&mut check_buf) {
+                Ok(0) => {
+                    // EOF reached, include this line even without newline
+                }
+                Ok(_) => {
+                    // More data available, this line was cut off, ignore it
+                    self.is_done = true;
+                    return None;
+                }
+                Err(_) => {
+                    // Error reading, treat as cut off line
+                    self.is_done = true;
+                    return None;
+                }
+            }
         }
 
         output = output.trim_matches(|c| c == '\n' || c == '\r').into();

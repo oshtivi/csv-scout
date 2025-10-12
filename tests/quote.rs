@@ -67,3 +67,24 @@ fn test_flaky_quote_detection() {
         }
     );
 }
+
+#[test]
+fn test_multiline_quoted_field() {
+    let data_filepath = Path::new(file!())
+        .parent()
+        .unwrap()
+        .join("data/multi-line-cell.csv");
+    let metadata = Sniffer::new()
+        .sample_size(SampleSize::All)
+        .sniff_path(data_filepath)
+        .unwrap();
+    assert_eq!(
+        metadata,
+        Metadata {
+            dialect: Dialect {
+                delimiter: b',',
+                quote: Quote::Some(b'"'),
+            },
+        }
+    );
+}
