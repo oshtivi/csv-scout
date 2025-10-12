@@ -8,7 +8,7 @@ keywords = ["csv"]
 license = "MIT"
 name = "csv-scout"
 repository = "https://github.com/oshtivi/csv-scout"
-version = "0.0.10"
+version = "0.0.11"
 rust-version = "1.85"
 
 [package.metadata.cargo-udeps.ignore]
