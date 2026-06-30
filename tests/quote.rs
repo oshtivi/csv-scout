@@ -68,6 +68,30 @@ fn test_flaky_quote_detection() {
     );
 }
 
+// Quoted JSON cells contain colons, producing an exact tie between ',' and ':'
+// in the candidate-delimiter tally. The winner must be deterministic (comma),
+// not dependent on HashMap iteration order. Repeat to defeat the per-run random seed.
+#[test]
+fn test_colon_in_quoted_json_is_stable() {
+    let data_filepath = Path::new(file!())
+        .parent()
+        .unwrap()
+        .join("data/colon_in_quoted_json.csv");
+    let expected = Metadata {
+        dialect: Dialect {
+            delimiter: b',',
+            quote: Quote::Some(b'"'),
+        },
+    };
+    for _ in 0..50 {
+        let metadata = Sniffer::new()
+            .sample_size(SampleSize::All)
+            .sniff_path(&data_filepath)
+            .unwrap();
+        assert_eq!(metadata, expected);
+    }
+}
+
 #[test]
 fn test_multiline_quoted_field() {
     let data_filepath = Path::new(file!())
