@@ -16,7 +16,6 @@ normal = ["bytecount"]
 
 [features]
 runtime-dispatch-simd = ["bytecount/runtime-dispatch-simd"]
-generic-simd = ["bytecount/generic-simd"]
 
 
 [profile.release]
@@ -30,7 +29,6 @@ strip = true
 # bitflags = "2.5"
 bytecount = "0.6"
 csv = "1"
-csv-core = "0.1"
 hashbrown = "0.15"
 itertools = "0.14.0"
 memchr = "2"

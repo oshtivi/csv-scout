@@ -1,0 +1,5 @@
+id,event_name,event_value,currency
+0,af_login,"{""af_quantity"": ""1"", ""af_price"": ""4""}",USD
+1,af_purchase,"{""af_revenue"": ""4"", ""af_price"": ""4""}",USD
+2,af_register,"{""af_quantity"": ""1"", ""af_price"": ""4""}",USD
+3,af_add_to_cart,"{""af_quantity"": ""1"", ""af_price"": ""4""}",USD

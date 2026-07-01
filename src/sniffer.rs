@@ -546,15 +546,17 @@ fn quote_count<R: Read>(
     }
 
     // Otherwise, select the candidate delimiter that was matched most frequently.
+    // Ties are broken deterministically by `delimiter_priority` (e.g. comma wins over
+    // colon); without this, the HashMap's iteration order would pick an arbitrary tied
+    // candidate, making the sniffed delimiter flaky across runs.
     let (delim_count, delim) =
         delim_count_map
             .into_iter()
             .fold((0, b'\0'), |acc, (delim, d_count)| {
-                if d_count > acc.0 {
-                    (d_count, delim)
-                } else {
-                    acc
-                }
+                let better = d_count > acc.0
+                    || (d_count == acc.0
+                        && delimiter_priority(delim as char) < delimiter_priority(acc.1 as char));
+                if better { (d_count, delim) } else { acc }
             });
 
     if delim_count == 0 {
