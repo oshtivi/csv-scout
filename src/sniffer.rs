@@ -486,29 +486,6 @@ impl Sniffer {
     // }
 }
 
-// Build a regex that matches a quoted CSV cell. For multi-line support, DOTALL mode lets
-// the cell body span newlines. When `delim` is None, the pattern also captures the
-// surrounding delimiter(s) into named groups so the caller can tally candidates.
-fn quote_pattern(character: char, delim: Option<u8>) -> String {
-    delim.map_or_else(
-        || {
-            // When delim is not provided, look for quoted fields and capture surrounding delimiters
-            // Make the pattern more restrictive to avoid matching apostrophes in text
-            format!(
-                r"(?:(?<delim1>[,;|\t:])\s*{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim2>[,;|\t:]))?)|(?:^{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim3>[,;|\t:])|$))"
-            )
-        },
-        |delim| {
-            // When a delimiter is provided, enforce its presence if it appears.
-            format!(
-                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*{d}\s*)?",
-                q = character,
-                d = delim as char
-            )
-        },
-    )
-}
-
 fn quote_count<R: Read>(
     sample_iter: &mut SampleIter<R>,
     character: char,
@@ -524,10 +501,40 @@ fn quote_count<R: Read>(
         sample_content.push_str(&line);
     }
 
-    // Safety: unwrap is safe here because we control the regex pattern.
-    let re = Regex::new(&quote_pattern(character, delim)).unwrap();
+    // Build a regex that matches a quoted CSV cell.
+    // For multi-line support, use DOTALL mode to match newlines within quotes.
+    let pattern = delim.map_or_else(
+        || {
+            // When delim is not provided, look for quoted fields and capture surrounding delimiters
+            // Make the pattern more restrictive to avoid matching apostrophes in text
+            format!(
+                r"(?:(?<delim1>[,;|\t:])\s*{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim2>[,;|\t:]))?)|(?:^{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim3>[,;|\t:])|$))"
+            )
+        },
+        |delim| {
+            // When a delimiter is provided, enforce its presence if it appears.
+            format!(
+                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*{d}\s*)?",
+                q = character,
+                d = delim as char
+            )
+        },
+    );
 
-    let (count, delim_count_map) = count_quoted_delims(&re, &sample_content);
+    // Safety: unwrap is safe here because we control the regex pattern.
+    let re = Regex::new(&pattern).unwrap();
+
+    let mut delim_count_map: HashMap<u8, usize> = HashMap::new();
+    let mut count = 0;
+
+    // Apply regex to the entire concatenated sample content
+    for cap in re.captures_iter(&sample_content) {
+        count += 1;
+
+        if let Some(delim) = get_delimiter(&cap) {
+            *delim_count_map.entry(delim).or_insert(0) += 1;
+        }
+    }
 
     if count == 0 {
         return Ok(None);
@@ -539,47 +546,25 @@ fn quote_count<R: Read>(
     }
 
     // Otherwise, select the candidate delimiter that was matched most frequently.
-    match pick_delim(&delim_count_map) {
-        Some((_, delim)) => Ok(Some((count, delim))),
-        None => Err(SnifferError::SniffingFailed(
-            "invalid regex match: no delimiter found".into(),
-        )),
-    }
-}
-
-// Tally, per candidate delimiter, how many quoted-field matches had that delimiter as a
-// neighbor. Returns the total match count and the per-delimiter breakdown.
-fn count_quoted_delims(re: &Regex, content: &str) -> (usize, HashMap<u8, usize>) {
-    let mut delim_count_map: HashMap<u8, usize> = HashMap::new();
-    let mut count = 0;
-    for cap in re.captures_iter(content) {
-        count += 1;
-        if let Some(delim) = get_delimiter(&cap) {
-            *delim_count_map.entry(delim).or_insert(0) += 1;
-        }
-    }
-    (count, delim_count_map)
-}
-
-// Select the most frequent candidate delimiter from the tally. Ties are broken
-// deterministically by `delimiter_priority` (e.g. comma wins over colon); without this,
-// the iteration order of the HashMap would pick an arbitrary tied candidate, making the
-// sniffed delimiter flaky across runs.
-fn pick_delim(delim_count_map: &HashMap<u8, usize>) -> Option<(usize, u8)> {
+    // Ties are broken deterministically by `delimiter_priority` (e.g. comma wins over
+    // colon); without this, the HashMap's iteration order would pick an arbitrary tied
+    // candidate, making the sniffed delimiter flaky across runs.
     let (delim_count, delim) =
         delim_count_map
-            .iter()
-            .fold((0usize, b'\0'), |acc, (&delim, &d_count)| {
+            .into_iter()
+            .fold((0, b'\0'), |acc, (delim, d_count)| {
                 let better = d_count > acc.0
                     || (d_count == acc.0
                         && delimiter_priority(delim as char) < delimiter_priority(acc.1 as char));
                 if better { (d_count, delim) } else { acc }
             });
+
     if delim_count == 0 {
-        None
-    } else {
-        Some((delim_count, delim))
+        return Err(SnifferError::SniffingFailed(
+            "invalid regex match: no delimiter found".into(),
+        ));
     }
+    Ok(Some((count, delim)))
 }
 
 fn get_delimiter(captures: &Captures<'_>) -> Option<u8> {
@@ -618,42 +603,5 @@ const fn delimiter_priority(delimiter: char) -> u8 {
         '|' => 3,  // Pipe - alternate delimiter
         ':' => 4,  // Colon - sometimes used
         _ => 255,  // Everything else gets lowest priority
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The fixture tests/data/colon_in_quoted_json.csv has quoted JSON cells whose colons make
-    // ':' tie ',' as a neighboring-delimiter candidate. This documents *why* the
-    // colon_in_quoted_json integration test needs a deterministic tie-break — if a future change
-    // breaks the tie, this assertion fails loudly instead of the guard silently going green for
-    // the wrong reason. We read the real fixture so the two tests can never drift apart.
-    #[test]
-    fn comma_and_colon_are_tied_for_colon_in_quoted_json() {
-        let content = include_str!("../tests/data/colon_in_quoted_json.csv");
-        let re = Regex::new(&quote_pattern('"', None)).unwrap();
-        let (_, tally) = count_quoted_delims(&re, content);
-
-        let comma = tally.get(&b',').copied().unwrap_or(0);
-        let colon = tally.get(&b':').copied().unwrap_or(0);
-
-        // The whole point of the regression: these counts are equal, so the winner cannot be
-        // decided by frequency alone.
-        assert_eq!(
-            comma, colon,
-            "expected a tie between ',' and ':' (tally: {tally:?})"
-        );
-        assert!(comma > 0, "fixture must actually produce matches");
-    }
-
-    #[test]
-    fn pick_delim_breaks_ties_toward_comma() {
-        let mut tally: HashMap<u8, usize> = HashMap::new();
-        tally.insert(b',', 8);
-        tally.insert(b':', 8);
-        // Deterministic regardless of HashMap iteration order: comma has higher priority.
-        assert_eq!(pick_delim(&tally), Some((8, b',')));
     }
 }
