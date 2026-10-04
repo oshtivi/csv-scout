@@ -19,6 +19,14 @@ use crate::error::Result;
 pub struct Metadata {
     /// [`Dialect`](struct.Dialect.html) subtype.
     pub dialect: Dialect,
+    /// How consistently the records in the sample split into the same number of fields when
+    /// read with [`dialect`](#structfield.dialect).
+    pub steadiness: Steadiness,
+    /// (Maximum) number of fields per record observed in the sample. `1` means the delimiter
+    /// never appeared, i.e. the data is not delimited.
+    pub num_fields: usize,
+    /// Whether the sampled data is valid UTF-8.
+    pub is_utf8: bool,
     // Average record length (in bytes).
     // pub avg_record_len: usize,
     // (Maximum) number of fields per record.
@@ -33,6 +41,9 @@ impl fmt::Display for Metadata {
         writeln!(f, "Metadata")?;
         writeln!(f, "========")?;
         writeln!(f, "{}", self.dialect)?;
+        writeln!(f, "Steadiness: {:?}", self.steadiness)?;
+        writeln!(f, "Number of fields: {}", self.num_fields)?;
+        writeln!(f, "Is utf-8 encoded?: {}", self.is_utf8)?;
         // writeln!(f, "Average record length (bytes): {}", self.avg_record_len)?;
         // writeln!(f, "Number of fields: {}", self.num_fields)?;
         // writeln!(f, "Fields:")?;
@@ -154,6 +165,19 @@ impl From<Dialect> for ReaderBuilder {
 
         bldr
     }
+}
+
+/// How consistently records split into fields, as determined by the sniffer's Markov-chain
+/// (Viterbi) analysis of per-record field counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Steadiness {
+    /// Every record (after an optional preamble) has the same number of fields.
+    SteadyStrict,
+    /// Records mostly have the maximum number of fields, but some have fewer.
+    SteadyFlex,
+    /// No consistent field count was found; the data is likely not tabular (or the delimiter is
+    /// wrong).
+    Unsteady,
 }
 
 /// Metadata about the header of the CSV file.

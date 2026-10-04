@@ -4,7 +4,7 @@ use std::path::Path;
 
 use csv_scout::{
     SampleSize, Sniffer,
-    metadata::{Dialect, Metadata, Quote},
+    metadata::{Dialect, Metadata, Quote, Steadiness},
 };
 
 #[test]
@@ -30,6 +30,9 @@ fn test_utf8() {
                 // flexible: false,
                 // is_utf8: false
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 11,
+            is_utf8: false,
             // avg_record_len: 137,
             // num_fields: 11,
             // fields: vec![
@@ -85,6 +88,9 @@ fn test_flexible_again() {
                 // flexible: true,
                 // is_utf8: true,
             },
+            steadiness: Steadiness::SteadyFlex,
+            num_fields: 7,
+            is_utf8: true,
             // avg_record_len: 112,
             // num_fields: 7,
             // fields: vec![
@@ -133,6 +139,9 @@ fn test_date_sniffing_dmy() {
                 // flexible: false,
                 // is_utf8: true
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 3,
+            is_utf8: true,
             // avg_record_len: 11,
             // num_fields: 3,
             // fields: vec![

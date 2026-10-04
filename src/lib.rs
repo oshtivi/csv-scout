@@ -18,6 +18,14 @@ This sniffer detects the following metadata about a CSV file:
 
 * Delimiter -- byte character between fields in a record
 * Quote -- byte character (either ", ', or `) used to quote fields, or that the file has no quotes
+* Steadiness -- whether records consistently split into the same number of fields
+* Number of fields -- (maximum) fields per record
+* UTF-8 -- whether the sampled data is valid UTF-8
+
+The delimiter candidates can be customized with
+[`Sniffer::candidates`](struct.Sniffer.html#method.candidates) (e.g. to detect `0x01` / `0x1F`
+separated data), and [`Sniffer::require_steady`](struct.Sniffer.html#method.require_steady) makes
+sniffing fail for input that is not steadily tabular.
 
 See [`Metadata`](metadata/struct.Metadata.html) for full information about what the sniffer returns.
 
@@ -74,7 +82,7 @@ pub mod error;
 pub mod metadata;
 
 mod sniffer;
-pub use sniffer::Sniffer;
+pub use sniffer::{DEFAULT_CANDIDATES, Sniffer};
 
 mod sample;
 pub use sample::SampleSize;
