@@ -2,7 +2,7 @@ use std::path::Path;
 
 use csv_scout::{
     SampleSize, Sniffer,
-    metadata::{Dialect, Metadata, Quote},
+    metadata::{Dialect, Metadata, Quote, Steadiness},
 };
 
 #[test]
@@ -22,6 +22,9 @@ fn test_double_quote() {
                 delimiter: b',',
                 quote: Quote::Some(b'"'),
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 3,
+            is_utf8: true,
         }
     );
 }
@@ -43,6 +46,9 @@ fn test_most_fields_unquoted() {
                 delimiter: b',',
                 quote: Quote::Some(b'"'),
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 5,
+            is_utf8: true,
         }
     );
 }
@@ -64,6 +70,9 @@ fn test_flaky_quote_detection() {
                 delimiter: b',',
                 quote: Quote::Some(b'"'),
             },
+            steadiness: Steadiness::SteadyFlex,
+            num_fields: 5,
+            is_utf8: true,
         }
     );
 }
@@ -82,6 +91,9 @@ fn test_colon_in_quoted_json_is_stable() {
             delimiter: b',',
             quote: Quote::Some(b'"'),
         },
+        steadiness: Steadiness::SteadyStrict,
+        num_fields: 4,
+        is_utf8: true,
     };
     for _ in 0..50 {
         let metadata = Sniffer::new()
@@ -109,6 +121,9 @@ fn test_multiline_quoted_field() {
                 delimiter: b',',
                 quote: Quote::Some(b'"'),
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 2,
+            is_utf8: true,
         }
     );
 }

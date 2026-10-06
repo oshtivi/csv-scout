@@ -4,7 +4,7 @@ use std::path::Path;
 
 use csv_scout::{
     SampleSize, Sniffer,
-    metadata::{Dialect, Metadata, Quote},
+    metadata::{Dialect, Metadata, Quote, Steadiness},
 };
 
 #[test]
@@ -30,6 +30,9 @@ fn test_semicolon() {
                 // flexible: false,
                 // is_utf8: true
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 5,
+            is_utf8: true,
             // avg_record_len: 35,
             // num_fields: 5,
             // fields: vec![
@@ -73,6 +76,9 @@ fn test_comma() {
                 // flexible: false,
                 // is_utf8: true,
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 5,
+            is_utf8: true,
             // avg_record_len: 30,
             // num_fields: 5,
             // fields: vec![
@@ -116,6 +122,9 @@ fn test_boolean() {
                 // flexible: false,
                 // is_utf8: true,
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 6,
+            is_utf8: true,
             // avg_record_len: 31,
             // num_fields: 6,
             // fields: vec![
@@ -161,6 +170,9 @@ fn test_flexible() {
                 // flexible: true,
                 // is_utf8: true,
             },
+            steadiness: Steadiness::SteadyFlex,
+            num_fields: 7,
+            is_utf8: true,
             // avg_record_len: 112,
             // num_fields: 7,
             // fields: vec![
@@ -208,6 +220,9 @@ fn test_utf8_again() {
                 // flexible: false,
                 // is_utf8: false
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 11,
+            is_utf8: false,
             // avg_record_len: 137,
             // num_fields: 11,
             // fields: vec![
@@ -263,6 +278,9 @@ fn test_date_sniffing() {
                 // flexible: false,
                 // is_utf8: true
             },
+            steadiness: Steadiness::SteadyStrict,
+            num_fields: 29,
+            is_utf8: true,
             // avg_record_len: 433,
             // num_fields: 29,
             // fields: vec![
@@ -348,6 +366,9 @@ fn test_tabs() {
                 delimiter: b'\t',
                 quote: Quote::None,
             },
+            steadiness: Steadiness::SteadyFlex,
+            num_fields: 18,
+            is_utf8: true,
         }
     );
 }

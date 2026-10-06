@@ -9,10 +9,13 @@ use csv::Reader;
 use regex::{Captures, Regex};
 
 use crate::{
-    chain::{Chain, STATE_UNSTEADY, ViterbiResults},
+    chain::{
+        Chain, STATE_STEADYFLEX, STATE_STEADYSTRICT, STATE_UNSTEADY, ScaledViterbiResults,
+        ViterbiResults,
+    },
     error::{Result, SnifferError},
     // field_type::DatePreference,
-    metadata::{Dialect, Metadata, Quote},
+    metadata::{Dialect, Metadata, Quote, Steadiness},
     sample::{SampleIter, SampleSize, take_sample_from_start},
 };
 
@@ -22,7 +25,8 @@ type AdjacentFrequency = u32;
 
 const TOLERANCE: u32 = 1;
 const NUM_ASCII_CHARS: usize = 128;
-const CANDIDATES: &[u8] = b"\t,;|:";
+/// Default delimiter candidates, used unless [`Sniffer::candidates`] is called.
+pub const DEFAULT_CANDIDATES: &[u8] = b"\t,;|:";
 
 thread_local! (pub static IS_UTF8: RefCell<bool> = const { RefCell::new(true) });
 // thread_local! (pub static DATE_PREFERENCE: RefCell<DatePreference> = const { RefCell::new(DatePreference::MdyFormat) });
@@ -46,6 +50,12 @@ pub struct Sniffer {
 
     // sample size to sniff
     sample_size: Option<SampleSize>,
+    // delimiter candidates; `None` means `DEFAULT_CANDIDATES`
+    candidates: Option<Vec<u8>>,
+    // fail sniffing unless a steady tabular structure is found
+    require_steady: bool,
+    // steadiness analysis of the current sniff: (steadiness, max delimiter frequency per record)
+    steadiness: Option<(Steadiness, usize)>,
     // date format preference
     // date_preference: Option<DatePreference>,
 }
@@ -83,6 +93,59 @@ impl Sniffer {
 
     fn get_sample_size(&self) -> SampleSize {
         self.sample_size.unwrap_or(SampleSize::Bytes(1 << 14))
+    }
+
+    /// The set of bytes considered as potential delimiters when the delimiter is inferred.
+    ///
+    /// Defaults to [`DEFAULT_CANDIDATES`] (`b"\t,;|:"`). Only ASCII bytes (`< 0x80`) are
+    /// supported; non-ASCII bytes, line breaks (`\n`, `\r`, which terminate records) and
+    /// duplicates are ignored. ASCII control separators such as `0x01` (Hive/Hadoop `^A`) and
+    /// `0x1F` (ASCII Unit Separator) are supported.
+    ///
+    /// If no candidate delimiter matches or the data is not delimited, sniffing falls back to `,`
+    /// (see [`require_steady`](Self::require_steady) to fail instead).
+    ///
+    /// Explicitly configuring candidates also enables the underflow-safe delimiter selection
+    /// described in [`require_steady`](Self::require_steady).
+    pub fn candidates(&mut self, candidates: &[u8]) -> &mut Self {
+        let mut ascii: Vec<u8> = Vec::with_capacity(candidates.len());
+        for &c in candidates {
+            if c.is_ascii() && c != b'\n' && c != b'\r' && !ascii.contains(&c) {
+                ascii.push(c);
+            }
+        }
+        self.candidates = Some(ascii);
+        self
+    }
+
+    fn get_candidates(&self) -> &[u8] {
+        self.candidates.as_deref().unwrap_or(DEFAULT_CANDIDATES)
+    }
+
+    /// Require the sniffed data to be steadily tabular.
+    ///
+    /// When `true`, sniffing fails with [`SnifferError::SniffingFailed`] if the chosen delimiter
+    /// never appears in the sample (fewer than 2 fields per record), or if it does not split
+    /// records into a consistent number of fields ([`Steadiness::Unsteady`]).
+    ///
+    /// Defaults to `false`, in which case a best-effort dialect is always returned (falling back
+    /// to `,` for non-delimited data) and callers can inspect
+    /// [`Metadata::steadiness`](crate::metadata::Metadata::steadiness) and
+    /// [`Metadata::num_fields`](crate::metadata::Metadata::num_fields) themselves.
+    ///
+    /// Setting this (or [`candidates`](Self::candidates)) makes delimiter selection use a
+    /// log-space Viterbi search, which does not suffer from the floating-point underflow that can
+    /// make the legacy selection pick an arbitrary candidate on long samples (roughly 1000+
+    /// lines). The legacy selection is kept for default callers for backward compatibility.
+    pub fn require_steady(&mut self, require: bool) -> &mut Self {
+        self.require_steady = require;
+        self
+    }
+
+    // Whether an opt-in option that changes delimiter selection is configured. When false, the
+    // legacy selection is used unchanged for backward compatibility.
+    const fn uses_scaled_selection(&self) -> bool {
+        self.require_steady || self.candidates.is_some()
     }
 
     // The date format preference when sniffing.
@@ -130,6 +193,12 @@ impl Sniffer {
         IS_UTF8.with(|flag| {
             *flag.borrow_mut() = true;
         });
+        self.steadiness = None;
+        if self.delimiter.is_none() && self.get_candidates().is_empty() {
+            return Err(SnifferError::SniffingFailed(
+                "no delimiter candidates configured".to_string(),
+            ));
+        }
         // guess quotes & delim
         self.infer_quotes_delim(&mut reader)?;
 
@@ -137,6 +206,11 @@ impl Sniffer {
         // flexible. Otherwise, we need to guess a delimiter as well.
         if self.delimiter.is_none() {
             self.infer_delim_preamble(&mut reader)?;
+        }
+
+        // Measure how steadily the chosen delimiter splits the sample into records.
+        if let Some(delimiter) = self.delimiter {
+            self.steadiness = Some(self.measure_known_delimiter(&mut reader, delimiter)?);
         }
 
         // self.infer_types(&mut reader)?;
@@ -166,6 +240,22 @@ impl Sniffer {
                 "Failed to infer all metadata: {self:?}"
             )));
         }
+        let (steadiness, max_delim_freq) = self.steadiness.unwrap_or((Steadiness::Unsteady, 0));
+        if self.require_steady {
+            // safety: checked above
+            let delim = char::from(self.delimiter.unwrap());
+            if max_delim_freq == 0 {
+                return Err(SnifferError::SniffingFailed(format!(
+                    "data is not delimited: delimiter {delim:?} never appears in the sample"
+                )));
+            }
+            if steadiness == Steadiness::Unsteady {
+                return Err(SnifferError::SniffingFailed(format!(
+                    "data is not steadily tabular: delimiter {delim:?} does not produce a \
+                     consistent number of fields per record"
+                )));
+            }
+        }
         // safety: we just checked that all these are Some, so it's safe to unwrap
         Ok(Metadata {
             dialect: Dialect {
@@ -178,6 +268,9 @@ impl Sniffer {
                 // flexible: self.flexible.unwrap(),
                 // is_utf8: self.is_utf8.unwrap(),
             },
+            steadiness,
+            num_fields: max_delim_freq + 1,
+            is_utf8: self.is_utf8.unwrap(),
             // avg_record_len: self.avg_record_len.unwrap(),
             // num_fields: self.delimiter_freq.unwrap() + 1,
             // fields: self.fields.clone(),
@@ -206,9 +299,12 @@ impl Sniffer {
             (b'"', (0, b'\0')),
             |acc, &chr| -> Result<(u8, (usize, u8))> {
                 let mut sample_reader = take_sample_from_start(reader, self.get_sample_size())?;
-                if let Some((cnt, delim_chr)) =
-                    quote_count(&mut sample_reader, char::from(chr), self.delimiter)?
-                {
+                if let Some((cnt, delim_chr)) = quote_count(
+                    &mut sample_reader,
+                    char::from(chr),
+                    self.delimiter,
+                    self.get_candidates(),
+                )? {
                     Ok(if cnt > acc.1.0 {
                         (chr, (cnt, delim_chr))
                     } else {
@@ -233,6 +329,7 @@ impl Sniffer {
         let sample_iter =
             take_sample_from_start(reader, self.get_sample_size())?.collect::<Result<Vec<_>>>()?;
 
+        let candidates = self.get_candidates();
         let mut chars_frequency: HashMap<u8, HashMap<NumberOfOccurrences, NumberOfLines>> =
             HashMap::with_capacity(NUM_ASCII_CHARS);
 
@@ -240,12 +337,15 @@ impl Sniffer {
             HashMap::with_capacity(NUM_ASCII_CHARS);
 
         for line in &sample_iter {
+            if line.is_empty() {
+                continue;
+            }
             let mut line_frequency = HashMap::with_capacity(128);
             for character in line.chars() {
                 let Ok(ascii_char) = u8::try_from(character) else {
                     continue;
                 };
-                if !CANDIDATES.contains(&ascii_char) {
+                if !candidates.contains(&ascii_char) {
                     continue;
                 }
                 *line_frequency.entry(ascii_char).or_default() += 1;
@@ -283,13 +383,16 @@ impl Sniffer {
             .iter()
             .filter(|(_, (_, score))| *score > 0)
             .sorted_by_key(|&(_, &(_, score))| std::cmp::Reverse(score)) // needs itertools or just sort
-            .take(6)
+            .take(candidates.len().max(6))
             .map(|(&ch, _)| ch)
             .collect();
 
         let mut chains = vec![Chain::default(); NUM_ASCII_CHARS];
 
         for line in sample_iter {
+            if line.is_empty() {
+                continue;
+            }
             let mut freqs = [0; NUM_ASCII_CHARS];
             for &chr in line.as_bytes() {
                 if chr < NUM_ASCII_CHARS as u8 {
@@ -307,6 +410,10 @@ impl Sniffer {
     // Updates delimiter (if not already known), delimiter frequency, number of preamble rows, and
     // flexible boolean.
     fn run_chains(&mut self, mut chains: Vec<Chain>) -> Result<()> {
+        if self.uses_scaled_selection() {
+            return self.run_scaled_chains(&chains);
+        }
+
         // Find the 'best' delimiter: choose strict (non-flexible) delimiters over flexible ones,
         // and choose the one that had the highest probability markov chain in the end.
         //
@@ -361,8 +468,94 @@ impl Sniffer {
         if self.delimiter.is_none() {
             self.delimiter = Some(best_delim);
         }
+        // Report steadiness from the underflow-safe search on the chosen delimiter's chain, so
+        // the reported value is accurate even when the legacy selection's probabilities
+        // underflowed. This does not affect which delimiter was chosen.
+        self.steadiness = Some(chain_steadiness(
+            &chains[usize::from(best_delim)].scaled_viterbi(),
+        ));
         // self.num_preamble_rows = Some(num_preamble_rows);
         Ok(())
+    }
+
+    // Same selection rule as the legacy `run_chains` (lowest state wins, then highest path
+    // probability, earlier byte wins ties) but on log-probabilities, so it does not underflow.
+    fn run_scaled_chains(&mut self, chains: &[Chain]) -> Result<()> {
+        let mut best: Option<(u8, ScaledViterbiResults, usize)> = None;
+        for (i, chain) in chains.iter().enumerate() {
+            let result = chain.scaled_viterbi();
+            let Some(state) = result.final_state else {
+                continue;
+            };
+            let better = match best {
+                None => state < STATE_UNSTEADY || result.log_prob.is_finite(),
+                Some((_, best_result, best_state)) => {
+                    state < best_state
+                        || (state == best_state && result.log_prob > best_result.log_prob)
+                }
+            };
+            if better {
+                // safety: chains has NUM_ASCII_CHARS (128) entries
+                best = Some((i as u8, result, state));
+            }
+        }
+        let (best_delim, steadiness) = best
+            .map_or((b',', (Steadiness::Unsteady, 0)), |(d, r, _)| {
+                (d, chain_steadiness(&r))
+            });
+        if self.delimiter.is_none() {
+            self.delimiter = Some(best_delim);
+        }
+        self.steadiness = Some(steadiness);
+        Ok(())
+    }
+
+    // Measures steadiness for a delimiter that is already known, by parsing the sample with the
+    // csv crate (respecting quotes, so delimiters inside quoted fields are not counted).
+    fn measure_known_delimiter<R: Read + Seek>(
+        &self,
+        reader: &mut R,
+        delimiter: u8,
+    ) -> Result<(Steadiness, usize)> {
+        reader.seek(SeekFrom::Start(0))?;
+        let mut builder = csv::ReaderBuilder::new();
+        builder
+            .delimiter(delimiter)
+            .has_headers(false)
+            .flexible(true);
+        match self.quote {
+            Some(Quote::Some(chr)) => {
+                builder.quoting(true).quote(chr);
+            }
+            _ => {
+                builder.quoting(false);
+            }
+        }
+        let (chain, all_utf8) = match self.get_sample_size() {
+            SampleSize::Bytes(max) => {
+                // Bound the read to the sample size, and (like `SampleIter`) drop a trailing
+                // line that was cut off by the limit.
+                let mut buf = Vec::with_capacity(max.min(1 << 20));
+                reader
+                    .take(u64::try_from(max).unwrap_or(u64::MAX))
+                    .read_to_end(&mut buf)?;
+                let mut probe = [0u8; 1];
+                let truncated = buf.len() == max && reader.read(&mut probe)? > 0;
+                if truncated {
+                    let keep = memchr::memrchr(b'\n', &buf).map_or(0, |pos| pos + 1);
+                    buf.truncate(keep);
+                }
+                count_fields(builder.from_reader(buf.as_slice()), None, truncated)?
+            }
+            SampleSize::Records(max) => {
+                count_fields(builder.from_reader(reader), Some(max), false)?
+            }
+            SampleSize::All => count_fields(builder.from_reader(reader), None, false)?,
+        };
+        if !all_utf8 {
+            IS_UTF8.with(|flag| *flag.borrow_mut() = false);
+        }
+        Ok(chain_steadiness(&chain.scaled_viterbi()))
     }
 
     // fn infer_types<R: Read + Seek>(&mut self, reader: &mut R) -> Result<()> {
@@ -490,6 +683,7 @@ fn quote_count<R: Read>(
     sample_iter: &mut SampleIter<R>,
     character: char,
     delim: Option<u8>,
+    candidates: &[u8],
 ) -> Result<Option<(usize, u8)>> {
     // Collect all lines into a single string to handle multi-line quoted fields
     let mut sample_content = String::new();
@@ -503,20 +697,26 @@ fn quote_count<R: Read>(
 
     // Build a regex that matches a quoted CSV cell.
     // For multi-line support, use DOTALL mode to match newlines within quotes.
+    // Character class of the delimiter candidates. Every byte is hex-escaped so control
+    // characters and regex metacharacters (e.g. `|`, `^`, `-`, `]`) are matched literally.
+    let class: String = candidates
+        .iter()
+        .map(|&c| format!("\\x{{{c:02X}}}"))
+        .collect();
     let pattern = delim.map_or_else(
         || {
             // When delim is not provided, look for quoted fields and capture surrounding delimiters
             // Make the pattern more restrictive to avoid matching apostrophes in text
             format!(
-                r"(?:(?<delim1>[,;|\t:])\s*{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim2>[,;|\t:]))?)|(?:^{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim3>[,;|\t:])|$))"
+                r"(?:(?<delim1>[{class}])\s*{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim2>[{class}]))?)|(?:^{character}(?:(?:{character}{character})|(?s:[^{character}]))*?{character}(?:\s*(?<delim3>[{class}])|$))"
             )
         },
         |delim| {
-            // When a delimiter is provided, enforce its presence if it appears.
+            // When a delimiter is provided, enforce its presence if it appears. The delimiter is
+            // hex-escaped (like the candidate class above) so it is matched literally.
             format!(
-                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*{d}\s*)?",
+                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*\x{{{delim:02X}}}\s*)?",
                 q = character,
-                d = delim as char
             )
         },
     );
@@ -553,9 +753,13 @@ fn quote_count<R: Read>(
         delim_count_map
             .into_iter()
             .fold((0, b'\0'), |acc, (delim, d_count)| {
+                let (prio, acc_prio) = (
+                    delimiter_priority(delim as char),
+                    delimiter_priority(acc.1 as char),
+                );
                 let better = d_count > acc.0
                     || (d_count == acc.0
-                        && delimiter_priority(delim as char) < delimiter_priority(acc.1 as char));
+                        && (prio < acc_prio || (prio == acc_prio && delim < acc.1)));
                 if better { (d_count, delim) } else { acc }
             });
 
@@ -604,4 +808,48 @@ const fn delimiter_priority(delimiter: char) -> u8 {
         ':' => 4,  // Colon - sometimes used
         _ => 255,  // Everything else gets lowest priority
     }
+}
+
+// Feeds the number of delimiters per record (fields - 1) into a chain. Returns the chain and
+// whether every field was valid UTF-8.
+fn count_fields<R: Read>(
+    mut csv_reader: Reader<R>,
+    max_records: Option<usize>,
+    drop_last_if_truncated: bool,
+) -> Result<(Chain, bool)> {
+    let mut observations = Vec::new();
+    let mut record = csv::ByteRecord::new();
+    let mut n_records = 0;
+    let mut all_utf8 = true;
+    while max_records.is_none_or(|max| n_records < max)
+        && csv_reader.read_byte_record(&mut record)?
+    {
+        n_records += 1;
+        if all_utf8
+            && record
+                .iter()
+                .any(|f| simdutf8::basic::from_utf8(f).is_err())
+        {
+            all_utf8 = false;
+        }
+        observations.push(record.len().saturating_sub(1));
+    }
+    if drop_last_if_truncated && observations.len() > 1 {
+        observations.pop();
+    }
+    let mut chain = Chain::default();
+    for obs in observations {
+        chain.add_observation(obs);
+    }
+    Ok((chain, all_utf8))
+}
+
+// Maps a Viterbi result to the public `Steadiness` and the delimiter's maximum frequency per record.
+fn chain_steadiness(result: &ScaledViterbiResults) -> (Steadiness, usize) {
+    let steadiness = match result.final_state {
+        Some(STATE_STEADYSTRICT) => Steadiness::SteadyStrict,
+        Some(STATE_STEADYFLEX) => Steadiness::SteadyFlex,
+        _ => Steadiness::Unsteady,
+    };
+    (steadiness, result.max_delim_freq)
 }
