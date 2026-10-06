@@ -61,51 +61,11 @@ impl Chain {
             };
         }
 
-        let start_prob = [
-            1.0 / 3.0, /*SteadyStrict*/
-            1.0 / 3.0, /*SteadyFlexible*/
-            1.0 / 3.0, /*Unsteady*/
-        ];
-        let mut trans_prob = [
-            /*FromSteadyStrict*/
-            1.0, 0.0, 0.0, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
-            /*FromSteadyFlexible*/
-            0.0, 1.0, 0.0, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
-            /*FromUnsteady*/
-            0.2, 0.2, 0.6, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
-        ];
-        let update_trans_prob = decay_trans_prob;
-
-        let emit_uniprob = 1.0 / (max_value as f64 + 1.0);
-        let emit_prob = [
-            /*FromSteadyStrict*/
-            1.0, /* MaxValue */
-            0.0, /* Other */
-            0.0, /* Zero */
-            /*FromSteadyFlexible*/
-            0.7, /* MaxValue */
-            0.3, /* Other */
-            0.0, /* Zero */
-            /*FromUnsteady*/
-            emit_uniprob, /* MaxValue */
-            // 1.0 - 2.0 * emit_uniprob, /* Other */
-            // below is the fused multiply add version
-            2.0f64.mul_add(-emit_uniprob, 1.0),
-            emit_uniprob, /* Zero */
-        ];
-        // function to map frequency to observation
-        let map_observation = |freq: usize| {
-            if freq == max_value {
-                OBS_MAXVALUE
-            } else if freq == 0 {
-                OBS_ZERO
-            } else {
-                OBS_OTHER
-            }
-        };
+        let model = Model::new(max_value);
+        let mut trans_prob = INITIAL_TRANS_PROB;
 
         let mut iterations: Vec<Vec<VIteration>> = vec![vec![]];
-        for prob_val in start_prob.iter().take(N_STATES) {
+        for prob_val in START_PROB.iter().take(N_STATES) {
             iterations[0].push(VIteration {
                 prob: *prob_val,
                 prev: None,
@@ -133,10 +93,10 @@ impl Chain {
                 );
                 iterations[t + 1].push(VIteration {
                     prob: max_tr_prob
-                        * emit_prob[state_idx * N_OBS + map_observation(self.observations[t])],
+                        * model.emit(state_idx, model.observation(self.observations[t])),
                     prev: max_prev_st,
                 });
-                update_trans_prob(&mut trans_prob);
+                decay_trans_prob(&mut trans_prob);
             }
         }
 
@@ -191,36 +151,12 @@ impl Chain {
             };
         }
 
-        let mut trans_prob: [f64; N_STATES * N_STATES] = [
-            1.0, 0.0, 0.0, /* from SteadyStrict */
-            0.0, 1.0, 0.0, /* from SteadyFlexible */
-            0.2, 0.2, 0.6, /* from Unsteady */
-        ];
-        let emit_uniprob = 1.0 / (max_value as f64 + 1.0);
-        let emit_prob = [
-            1.0,
-            0.0,
-            0.0,
-            0.7,
-            0.3,
-            0.0,
-            emit_uniprob,
-            2.0f64.mul_add(-emit_uniprob, 1.0),
-            emit_uniprob,
-        ];
-        let map_observation = |freq: usize| {
-            if freq == max_value {
-                OBS_MAXVALUE
-            } else if freq == 0 {
-                OBS_ZERO
-            } else {
-                OBS_OTHER
-            }
-        };
+        let model = Model::new(max_value);
+        let mut trans_prob = INITIAL_TRANS_PROB;
 
-        let mut current = [(1.0f64 / 3.0).ln(); N_STATES];
+        let mut current = START_PROB.map(f64::ln);
         for &obs in &self.observations {
-            let obs = map_observation(obs);
+            let obs = model.observation(obs);
             let mut next = [f64::NEG_INFINITY; N_STATES];
             for (state_idx, next_val) in next.iter_mut().enumerate() {
                 // same argmax (first max wins) as `viterbi`, but on log-probabilities
@@ -231,8 +167,7 @@ impl Chain {
                         best = Some(tr);
                     }
                 }
-                *next_val =
-                    best.unwrap_or(f64::NEG_INFINITY) + emit_prob[state_idx * N_OBS + obs].ln();
+                *next_val = best.unwrap_or(f64::NEG_INFINITY) + model.emit(state_idx, obs).ln();
                 // `viterbi` decays the Unsteady->Steady transitions once per state per step;
                 // mirror that exactly.
                 decay_trans_prob(&mut trans_prob);
@@ -240,20 +175,94 @@ impl Chain {
             current = next;
         }
 
-        // first max wins, matching `viterbi`
-        let (final_state, log_prob) =
-            current
-                .iter()
-                .enumerate()
-                .fold(
-                    (0, current[0]),
-                    |acc, (state, &p)| if p > acc.1 { (state, p) } else { acc },
-                );
+        let (final_state, log_prob) = select_final_state(&current);
         ScaledViterbiResults {
             max_delim_freq: max_value,
             final_state: Some(final_state),
             log_prob,
         }
+    }
+}
+
+const START_PROB: [f64; N_STATES] = [
+    1.0 / 3.0, /*SteadyStrict*/
+    1.0 / 3.0, /*SteadyFlexible*/
+    1.0 / 3.0, /*Unsteady*/
+];
+
+/// Transition probabilities before any decay (see [`decay_trans_prob`]), indexed
+/// `[from * N_STATES + to]`.
+const INITIAL_TRANS_PROB: [f64; N_STATES * N_STATES] = [
+    /*FromSteadyStrict*/
+    1.0, 0.0, 0.0, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
+    /*FromSteadyFlexible*/
+    0.0, 1.0, 0.0, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
+    /*FromUnsteady*/
+    0.2, 0.2, 0.6, /* ToSteadyStrict, ToSteadyFlexible, ToUnsteady */
+];
+
+/// Emission model shared by [`Chain::viterbi`] and [`Chain::scaled_viterbi`]; depends on the
+/// maximum observed delimiter frequency.
+struct Model {
+    max_value: usize,
+    emit_prob: [f64; N_STATES * N_OBS],
+}
+
+impl Model {
+    fn new(max_value: usize) -> Self {
+        let emit_uniprob = 1.0 / (max_value as f64 + 1.0);
+        Self {
+            max_value,
+            emit_prob: [
+                /*FromSteadyStrict*/
+                1.0, /* MaxValue */
+                0.0, /* Other */
+                0.0, /* Zero */
+                /*FromSteadyFlexible*/
+                0.7, /* MaxValue */
+                0.3, /* Other */
+                0.0, /* Zero */
+                /*FromUnsteady*/
+                emit_uniprob, /* MaxValue */
+                // 1.0 - 2.0 * emit_uniprob, as a fused multiply-add
+                2.0f64.mul_add(-emit_uniprob, 1.0), /* Other */
+                emit_uniprob,                       /* Zero */
+            ],
+        }
+    }
+
+    /// Maps a delimiter frequency to an observation.
+    const fn observation(&self, freq: usize) -> usize {
+        if freq == self.max_value {
+            OBS_MAXVALUE
+        } else if freq == 0 {
+            OBS_ZERO
+        } else {
+            OBS_OTHER
+        }
+    }
+
+    const fn emit(&self, state: usize, obs: usize) -> f64 {
+        self.emit_prob[state * N_OBS + obs]
+    }
+}
+
+/// Picks the most likely final state from per-state log-probabilities (first max wins, matching
+/// [`Chain::viterbi`]). If every state is impossible (`-inf`), there is no evidence of a steady
+/// structure, so this reports `STATE_UNSTEADY` rather than defaulting to `STATE_STEADYSTRICT`.
+fn select_final_state(log_probs: &[f64; N_STATES]) -> (usize, f64) {
+    let (state, log_prob) =
+        log_probs
+            .iter()
+            .enumerate()
+            .fold(
+                (0, log_probs[0]),
+                |acc, (state, &p)| if p > acc.1 { (state, p) } else { acc },
+            );
+    if log_prob == f64::NEG_INFINITY {
+        (STATE_UNSTEADY, f64::NEG_INFINITY)
+    } else {
+        (state, log_prob)
     }
 }
 
@@ -322,6 +331,28 @@ mod tests {
 
         let c = chain(std::iter::repeat_n(7, 5000));
         assert_eq!(c.scaled_viterbi().final_state, Some(STATE_STEADYSTRICT));
+    }
+
+    #[test]
+    fn select_final_state_all_impossible_is_unsteady() {
+        let ninf = f64::NEG_INFINITY;
+        assert_eq!(
+            select_final_state(&[ninf, ninf, ninf]),
+            (STATE_UNSTEADY, ninf)
+        );
+        // first max wins on ties
+        assert_eq!(
+            select_final_state(&[-1.0, -1.0, -2.0]),
+            (STATE_STEADYSTRICT, -1.0)
+        );
+        assert_eq!(
+            select_final_state(&[ninf, -3.0, -2.0]),
+            (STATE_UNSTEADY, -2.0)
+        );
+        assert_eq!(
+            select_final_state(&[ninf, -1.0, -2.0]),
+            (STATE_STEADYFLEX, -1.0)
+        );
     }
 
     #[test]

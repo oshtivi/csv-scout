@@ -237,6 +237,36 @@ fn custom_candidates_more_than_six() {
 }
 
 #[test]
+fn custom_candidates_line_breaks_ignored() {
+    // '\n' / '\r' are record terminators, never field delimiters
+    let m = sniff(Sniffer::new().candidates(b"\n\r|"), &delimited(b'|', 20, 4)).unwrap();
+    assert_eq!(m.dialect.delimiter, b'|');
+    assert_eq!(m.num_fields, 4);
+
+    // only line breaks -> effectively empty set
+    let err = sniff(Sniffer::new().candidates(b"\r\n"), &delimited(b',', 5, 3)).unwrap_err();
+    assert!(matches!(err, SnifferError::SniffingFailed(_)), "{err}");
+}
+
+#[test]
+fn user_delimiter_regex_metacharacters_with_quotes() {
+    // A user-supplied delimiter is interpolated into the quote-detection regex; it must be
+    // matched literally (and must not panic) for regex metacharacters.
+    for &delim in br"|[(.*+?^$\{" {
+        let d = char::from(delim);
+        let mut content = String::new();
+        for i in 0..10 {
+            content.push_str(&format!("{i}{d}\"name {i}\"{d}x\n"));
+        }
+        let m = sniff(Sniffer::new().delimiter(delim), content.as_bytes())
+            .unwrap_or_else(|e| panic!("delimiter {d:?}: {e}"));
+        assert_eq!(m.dialect.delimiter, delim, "{d:?}");
+        assert_eq!(m.dialect.quote, Quote::Some(b'"'), "{d:?}");
+        assert_eq!(m.num_fields, 3, "{d:?}");
+    }
+}
+
+#[test]
 fn custom_candidates_non_ascii_ignored() {
     // only non-ASCII candidates -> effectively empty set
     let err = sniff(

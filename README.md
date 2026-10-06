@@ -58,7 +58,8 @@ fn main() {
 
 By default the delimiter is chosen from `csv_scout::DEFAULT_CANDIDATES` (`b"\t,;|:"`).
 Use `candidates` to override the set, e.g. to detect Hive/Hadoop `^A` (`0x01`) or the
-ASCII Unit Separator (`0x1F`). Only ASCII bytes are supported.
+ASCII Unit Separator (`0x1F`). Only ASCII bytes are supported; line breaks (`\n`, `\r`) are
+ignored since they terminate records.
 
 ```rust
 use csv_scout::Sniffer;

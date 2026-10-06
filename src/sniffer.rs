@@ -98,15 +98,16 @@ impl Sniffer {
     /// The set of bytes considered as potential delimiters when the delimiter is inferred.
     ///
     /// Defaults to [`DEFAULT_CANDIDATES`] (`b"\t,;|:"`). Only ASCII bytes (`< 0x80`) are
-    /// supported; non-ASCII bytes and duplicates are ignored. ASCII control separators such as
-    /// `0x01` (Hive/Hadoop `^A`) and `0x1F` (ASCII Unit Separator) are supported.
+    /// supported; non-ASCII bytes, line breaks (`\n`, `\r`, which terminate records) and
+    /// duplicates are ignored. ASCII control separators such as `0x01` (Hive/Hadoop `^A`) and
+    /// `0x1F` (ASCII Unit Separator) are supported.
     ///
     /// Explicitly configuring candidates also enables the underflow-safe delimiter selection
     /// described in [`require_steady`](Self::require_steady).
     pub fn candidates(&mut self, candidates: &[u8]) -> &mut Self {
         let mut ascii: Vec<u8> = Vec::with_capacity(candidates.len());
         for &c in candidates {
-            if c.is_ascii() && !ascii.contains(&c) {
+            if c.is_ascii() && c != b'\n' && c != b'\r' && !ascii.contains(&c) {
                 ascii.push(c);
             }
         }
@@ -702,11 +703,11 @@ fn quote_count<R: Read>(
             )
         },
         |delim| {
-            // When a delimiter is provided, enforce its presence if it appears.
+            // When a delimiter is provided, enforce its presence if it appears. The delimiter is
+            // hex-escaped (like the candidate class above) so it is matched literally.
             format!(
-                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*{d}\s*)?",
+                r"{q}(?P<field>(?s:(?:[^{q}]|{q}{q})*)){q}(?:\s*\x{{{delim:02X}}}\s*)?",
                 q = character,
-                d = delim as char
             )
         },
     );
