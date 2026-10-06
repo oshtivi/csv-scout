@@ -102,6 +102,9 @@ impl Sniffer {
     /// duplicates are ignored. ASCII control separators such as `0x01` (Hive/Hadoop `^A`) and
     /// `0x1F` (ASCII Unit Separator) are supported.
     ///
+    /// If no candidate delimiter matches or the data is not delimited, sniffing falls back to `,`
+    /// (see [`require_steady`](Self::require_steady) to fail instead).
+    ///
     /// Explicitly configuring candidates also enables the underflow-safe delimiter selection
     /// described in [`require_steady`](Self::require_steady).
     pub fn candidates(&mut self, candidates: &[u8]) -> &mut Self {
@@ -205,12 +208,9 @@ impl Sniffer {
             self.infer_delim_preamble(&mut reader)?;
         }
 
-        // The delimiter was known up front (user-supplied, or found by quote detection), so
-        // measure how steadily it splits the sample into records.
-        if self.steadiness.is_none() {
-            if let Some(delimiter) = self.delimiter {
-                self.steadiness = Some(self.measure_known_delimiter(&mut reader, delimiter)?);
-            }
+        // Measure how steadily the chosen delimiter splits the sample into records.
+        if let Some(delimiter) = self.delimiter {
+            self.steadiness = Some(self.measure_known_delimiter(&mut reader, delimiter)?);
         }
 
         // self.infer_types(&mut reader)?;
@@ -337,6 +337,9 @@ impl Sniffer {
             HashMap::with_capacity(NUM_ASCII_CHARS);
 
         for line in &sample_iter {
+            if line.is_empty() {
+                continue;
+            }
             let mut line_frequency = HashMap::with_capacity(128);
             for character in line.chars() {
                 let Ok(ascii_char) = u8::try_from(character) else {
@@ -387,6 +390,9 @@ impl Sniffer {
         let mut chains = vec![Chain::default(); NUM_ASCII_CHARS];
 
         for line in sample_iter {
+            if line.is_empty() {
+                continue;
+            }
             let mut freqs = [0; NUM_ASCII_CHARS];
             for &chr in line.as_bytes() {
                 if chr < NUM_ASCII_CHARS as u8 {
@@ -534,14 +540,17 @@ impl Sniffer {
                     .take(u64::try_from(max).unwrap_or(u64::MAX))
                     .read_to_end(&mut buf)?;
                 let mut probe = [0u8; 1];
-                if buf.len() == max && reader.read(&mut probe)? > 0 {
+                let truncated = buf.len() == max && reader.read(&mut probe)? > 0;
+                if truncated {
                     let keep = memchr::memrchr(b'\n', &buf).map_or(0, |pos| pos + 1);
                     buf.truncate(keep);
                 }
-                count_fields(builder.from_reader(buf.as_slice()), None)?
+                count_fields(builder.from_reader(buf.as_slice()), None, truncated)?
             }
-            SampleSize::Records(max) => count_fields(builder.from_reader(reader), Some(max))?,
-            SampleSize::All => count_fields(builder.from_reader(reader), None)?,
+            SampleSize::Records(max) => {
+                count_fields(builder.from_reader(reader), Some(max), false)?
+            }
+            SampleSize::All => count_fields(builder.from_reader(reader), None, false)?,
         };
         if !all_utf8 {
             IS_UTF8.with(|flag| *flag.borrow_mut() = false);
@@ -806,8 +815,9 @@ const fn delimiter_priority(delimiter: char) -> u8 {
 fn count_fields<R: Read>(
     mut csv_reader: Reader<R>,
     max_records: Option<usize>,
+    drop_last_if_truncated: bool,
 ) -> Result<(Chain, bool)> {
-    let mut chain = Chain::default();
+    let mut observations = Vec::new();
     let mut record = csv::ByteRecord::new();
     let mut n_records = 0;
     let mut all_utf8 = true;
@@ -822,12 +832,19 @@ fn count_fields<R: Read>(
         {
             all_utf8 = false;
         }
-        chain.add_observation(record.len().saturating_sub(1));
+        observations.push(record.len().saturating_sub(1));
+    }
+    if drop_last_if_truncated && observations.len() > 1 {
+        observations.pop();
+    }
+    let mut chain = Chain::default();
+    for obs in observations {
+        chain.add_observation(obs);
     }
     Ok((chain, all_utf8))
 }
 
-// Maps a Viterbi result to the public `Steadiness` and the delimiter's mode frequency per record.
+// Maps a Viterbi result to the public `Steadiness` and the delimiter's maximum frequency per record.
 fn chain_steadiness(result: &ScaledViterbiResults) -> (Steadiness, usize) {
     let steadiness = match result.final_state {
         Some(STATE_STEADYSTRICT) => Steadiness::SteadyStrict,

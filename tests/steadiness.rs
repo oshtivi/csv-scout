@@ -416,6 +416,35 @@ fn require_steady_accepts_long_steady_sample() {
 }
 
 #[test]
+fn blank_lines_do_not_make_data_unsteady() {
+    // trailing blank line (`...\n\n`) and a blank line mid-file
+    let mut trailing = delimited(b',', 60, 3);
+    trailing.push(b'\n');
+    let mut middle = delimited(b',', 30, 3);
+    middle.push(b'\n');
+    middle.extend_from_slice(&delimited(b',', 30, 3));
+
+    for (name, content) in [("trailing", &trailing), ("middle", &middle)] {
+        for require in [false, true] {
+            let m = sniff(Sniffer::new().require_steady(require), content)
+                .unwrap_or_else(|e| panic!("{name} require_steady={require}: {e}"));
+            assert_eq!(m.dialect.delimiter, b',', "{name}");
+            assert_eq!(m.steadiness, Steadiness::SteadyStrict, "{name}");
+            assert_eq!(m.num_fields, 3, "{name}");
+
+            // same answer when the delimiter is supplied
+            let known = sniff(
+                Sniffer::new().delimiter(b',').require_steady(require),
+                content,
+            )
+            .unwrap();
+            assert_eq!(known.steadiness, m.steadiness, "{name}");
+            assert_eq!(known.num_fields, m.num_fields, "{name}");
+        }
+    }
+}
+
+#[test]
 fn require_steady_can_be_reset() {
     let mut sniffer = Sniffer::new();
     sniffer.require_steady(true);
@@ -474,7 +503,6 @@ fn metadata_utf8_flag_resets_between_sniffs() {
     let mut sniffer = Sniffer::new();
     let m = sniff(&mut sniffer, b"a,b\n\xFF,c\n").unwrap();
     assert!(!m.is_utf8);
-    let mut sniffer = Sniffer::new();
     let m = sniff(&mut sniffer, b"a,b\nd,c\n").unwrap();
     assert!(m.is_utf8);
 }
